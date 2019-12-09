@@ -1,0 +1,8 @@
+#! /bin/bash
+
+set -e
+
+for d in 02 05 07 09; do
+    ghc -dynamic -O2 day$d.hs
+    ./day$d < day$d.in | tee /dev/stderr | diff -u day$d.out -
+done
