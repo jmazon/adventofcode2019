@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 module IntCode (getIntCode,evaluateOld,evaluate) where
 
 import Data.Maybe (fromMaybe)
@@ -6,6 +7,7 @@ import Data.Vector (Vector,(!?),(//))
 import Data.List.Split (linesBy)
 import Data.List (intercalate)
 import Control.Arrow (second)
+import Control.Monad.Writer.Lazy
 import Debug.Trace
 
 traceState = False
@@ -25,7 +27,7 @@ evaluateOld prg i j = fst (_evaluate (prg // [(1,i),(2,j)])
 evaluate = (snd .) . _evaluate
 
 _evaluate :: RAM -> [Int] -> (Int,[Int])
-_evaluate v0 input = go v0 input 0 0 where
+_evaluate v0 input = runWriter (go v0 input 0 0) where
   go v _ r p | traceState && traceShow (v,r,p) False = undefined
   go v i r p = case modInst `mod` 100 of
       1  -> binOp (+) "ADD"
@@ -64,14 +66,14 @@ _evaluate v0 input = go v0 input 0 0 where
                   (op2,dbgOp2) = inParam 2
                   (out,dbgOp3) = outParam 3
 
-          haltOp name = traceOp [name] (readAddr 0,[])
+          haltOp name = traceOp [name] $ pure (readAddr 0)
 
           inOp name = traceOp [name,dbgOut] $
                       let h:t = i in go (out h) t r (p+2)
             where (out,dbgOut) = outParam 1
 
           outOp name = traceOp [name,dbgOp] $
-                       second (op :) $ go v i r (p+2)
+                       tell [op] *> go v i r (p+2)
             where (op,dbgOp) = inParam 1
 
           condBranchOp pr name = traceOp [name,dbgOp1,dbgOp2] $

@@ -2,7 +2,12 @@
 
 set -e
 
-for d in 02 05 07 09; do
+if [[ $# > 0 ]]; then INTCODE_DAYS="$1"
+else INTCODE_DAYS="02 05 07 09"; fi
+
+for d in $INTCODE_DAYS; do
+    [[ -r day$d.hs ]] || { echo "No .hs source for day $d" >&2; exit 2; }
     ghc -dynamic -O2 day$d.hs
+    [[ -r day$d.in ]] || { echo "No input for day $d" >&2 && exit 3; }
     ./day$d < day$d.in | tee /dev/stderr | diff -u day$d.out -
 done
