@@ -52,35 +52,6 @@ _evaluate :: M ()
 _evaluate = whileM go where
   -- go _ r p | traceState && traceShow (v,r,p) False = undefined
   go = do
-    let binOp op f name = do
-          ([Left op1,Left op2,Right out],dbgOps) <- readParams op [In,In,Out]
-          traceOp (name:dbgOps)
-          out (op1 `f` op2)
-
-        inOp op name = do
-          ([Right out],dbgOps) <- readParams op [Out]
-          traceOp (name:dbgOps)
-          s@S{inputStream = (h:t)} <- get
-          put $! s { inputStream = t }
-          out h
-
-        outOp :: (MonadFail m,MonadState S m,MonadWriter [Int] m)
-              => Op -> String -> m ()
-        outOp op name = do
-          ([Left op1],dbgOps) <- readParams op [In]
-          traceOp (name:dbgOps)
-          tell [op1]
-
-        condBranchOp op pr name = do
-          ([Left op1,Left op2],dbgOps) <- readParams op [In,In]
-          traceOp (name:dbgOps)
-          when (pr op1) (setPos op2)
-
-        relOp op name = do
-          ([Left delta],dbgOps) <- readParams op [In]
-          traceOp (name:dbgOps)
-          advanceRel delta
-
     op <- decodeOp <$> readInstr
     let i = modInst op
     case i of
@@ -96,6 +67,41 @@ _evaluate = whileM go where
       99 -> haltOp op "HCF"
       x  -> error $ "Unknown opcode " ++ show x
     pure (i /= 99)
+
+binOp :: (MonadFail m,MonadState S m) =>
+         Op -> (Int -> Int -> Int) -> String -> m ()
+binOp op f name = do
+  ([Left op1,Left op2,Right out],dbgOps) <- readParams op [In,In,Out]
+  traceOp (name:dbgOps)
+  out (op1 `f` op2)
+
+inOp :: (MonadFail m,MonadState S m) => Op -> String -> m ()
+inOp op name = do
+  ([Right out],dbgOps) <- readParams op [Out]
+  traceOp (name:dbgOps)
+  s@S{inputStream = (h:t)} <- get
+  put $! s { inputStream = t }
+  out h
+
+outOp :: (MonadFail m,MonadState S m,MonadWriter [Int] m)
+      => Op -> String -> m ()
+outOp op name = do
+  ([Left op1],dbgOps) <- readParams op [In]
+  traceOp (name:dbgOps)
+  tell [op1]
+
+condBranchOp :: (MonadFail m,MonadState S m) =>
+                Op -> (Int -> Bool) -> String -> m ()
+condBranchOp op pr name = do
+  ([Left op1,Left op2],dbgOps) <- readParams op [In,In]
+  traceOp (name:dbgOps)
+  when (pr op1) (setPos op2)
+
+relOp :: (MonadFail m,MonadState S m) => Op -> String -> m ()
+relOp op name = do
+  ([Left delta],dbgOps) <- readParams op [In]
+  traceOp (name:dbgOps)
+  advanceRel delta
 
 readInstr :: MonadState S m => m Int
 readInstr = readAddr =<< gets position <* incrPos
