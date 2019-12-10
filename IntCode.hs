@@ -1,9 +1,9 @@
 -- TODO: eliminate MonadFail (make readParams take static vector)
--- TODO: readParams gives only Dir and Mode to in/outParam (no Op)
 
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TupleSections #-}
 
 module IntCode (getIntCode,evaluateOld,evaluate) where
 
@@ -61,7 +61,7 @@ _evaluate = whileM go where
           ([Right out],dbgOps) <- readParams op [Out]
           traceOp (name:dbgOps)
           s@S{inputStream = (h:t)} <- get
-          put s { inputStream = t }
+          put $! s { inputStream = t }
           out h
 
         outOp :: (MonadFail m,MonadState S m,MonadWriter [Int] m)
@@ -137,24 +137,32 @@ incrPos = modify' $ \s -> s { position = position s + 1 }
 advanceRel :: MonadState S m => Int -> m ()
 advanceRel delta = modify' $ \s -> s { relative = relative s + delta }
 
+readRel :: MonadState S m => Int -> m Int
+readRel offset = readAddr . (+ offset) =<< gets relative
+
+writeRel :: MonadState S m => Int -> m (Int -> m ())
+writeRel offset = writeRel . (+ offset) =<< gets relative
+
 data Dir = In | Out
+
+showPos,showRel :: Int -> String
+showPos p = "[" ++ show p ++ "]"
+showRel = ('R' :) . showPos
 
 readParams :: MonadState S m =>
               Op -> [Dir] -> m ([Either Int (Int -> m ())],[String])
 readParams op dirs = unzip <$> zipWithM f [1..] dirs where
-  f n In  = fmap (first Left)  .  inParam op n =<< readInstr
-  f n Out = fmap (first Right) . outParam op n =<< readInstr
+  f n In  = fmap (first Left)  .  inParam (mode op n) =<< readInstr
+  f n Out = fmap (first Right) . outParam (mode op n) =<< readInstr
 
-inParam :: MonadState S m => Op -> Int -> Int -> m (Int,String)
-inParam op o s = case mode op o of
-    Position  -> readAddr    s  >>= \v -> pure (v,"[" ++ show s ++ "]")
-    Immediate ->                          pure (s,show s)
-    Relative  -> gets relative >>= \r ->
-                 readAddr (r+s) >>= \v -> pure (v,"R[" ++ show s ++ "]")
+inParam :: MonadState S m => Mode -> Int -> m (Int,String)
+inParam m s = case m of
+    Position  -> readAddr s >>= \v -> pure (v,showPos s)
+    Immediate ->                      pure (s,show    s)
+    Relative  -> readRel  s >>= \v -> pure (v,showRel s)
 
-outParam :: MonadState S m => Op -> Int -> Int -> m (Int -> m (),String)
-outParam op o t = case mode op o of
-    Position -> pure (writeAddr      t,"[" ++ show t ++ "]")
-    Relative -> gets relative >>= \r ->
-                pure (writeAddr (r + t),"R[" ++ show t ++ "]")
+outParam :: MonadState S m => Mode -> Int -> m (Int -> m (),String)
+outParam m t = case m of
+    Position -> (,showPos t) <$> pure (writeAddr t)
+    Relative -> (,showRel t) <$>       writeRel  t
     x -> error $ "Invalid output addressing mode " ++ show x
