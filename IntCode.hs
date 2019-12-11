@@ -49,43 +49,42 @@ instance MonadFail M where fail = error
 newtype R = R () -- currently unused, but I'll keep the typing for free.
 
 data S = S { ram :: !RAM, inputStream :: [Int]
-           , position :: !Int, relativeBase :: !Int }
+           , instructionPointer :: !Int, relativeBase :: !Int }
 
 _evaluate :: M ()
 _evaluate = whileM $ do
   -- traceState && traceShow (v,r,p) False = undefined
-  op <- decodeOp <$> readInstr
-  let i = opCode op
+  Op {opCode,paramModes} <- decodeOp <$> readInstr
 
-  case i of
-    1  -> binOp op (+) "ADD"
-    2  -> binOp op (*) "MUL"
-    99 -> haltOp op "HCF"
+  case opCode of
+    1  -> binOp paramModes (+) "ADD"
+    2  -> binOp paramModes (*) "MUL"
+    99 -> haltOp paramModes "HCF"
 
     -- day 5 part 1
-    3  -> inOp op "IN"
-    4  -> outOp op "OUT"
+    3  -> inOp paramModes "IN"
+    4  -> outOp paramModes "OUT"
 
     -- day 5 part 2
-    5  -> condBranchOp op (/= 0) "BNZ"
-    6  -> condBranchOp op (== 0) "BZ"
-    7  -> binOp op ((fromEnum .) .  (<)) "LT"
-    8  -> binOp op ((fromEnum .) . (==)) "EQ"
+    5  -> condBranchOp paramModes (/= 0) "BNZ"
+    6  -> condBranchOp paramModes (== 0) "BZ"
+    7  -> binOp paramModes ((fromEnum .) .  (<)) "LT"
+    8  -> binOp paramModes ((fromEnum .) . (==)) "EQ"
 
     -- day 9
-    9  -> relOp op "INCR"
+    9  -> relOp paramModes "INCR"
 
     x  -> error $ "Unknown opcode " ++ show x
-  pure (i /= 99)
+  pure (opCode /= 99)
 
 binOp :: (MonadFail m,MonadState S m) =>
-         Op -> (Int -> Int -> Int) -> String -> m ()
-binOp op f name = do
-  ([Left op1,Left op2,Right out],dbgOps) <- readParams op [In,In,Out]
+         [Mode] -> (Int -> Int -> Int) -> String -> m ()
+binOp modes f name = do
+  ([Left op1,Left op2,Right out],dbgOps) <- readParams modes [In,In,Out]
   traceOp (name:dbgOps)
   out (op1 `f` op2)
 
-haltOp :: Applicative m => Op -> String -> m ()
+haltOp :: Applicative m => [Mode] -> String -> m ()
 haltOp _ name = traceOp [name]
 
 -- Day 5: I/O and a new ABI
@@ -93,40 +92,40 @@ haltOp _ name = traceOp [name]
 evaluate :: RAM -> [Int] -> [Int]
 evaluate prg i = snd $ evalRWS (unM _evaluate) (R ()) (S prg i 0 0)
 
-inOp :: (MonadFail m,MonadState S m) => Op -> String -> m ()
-inOp op name = do
-  ([Right out],dbgOps) <- readParams op [Out]
+inOp :: (MonadFail m,MonadState S m) => [Mode] -> String -> m ()
+inOp modes name = do
+  ([Right out],dbgOps) <- readParams modes [Out]
   traceOp (name:dbgOps)
   s@S{inputStream = (h:t)} <- get
   put $! s { inputStream = t }
   out h
 
 outOp :: (MonadFail m,MonadState S m,MonadWriter [Int] m)
-      => Op -> String -> m ()
-outOp op name = do
-  ([Left op1],dbgOps) <- readParams op [In]
+      => [Mode] -> String -> m ()
+outOp modes name = do
+  ([Left op1],dbgOps) <- readParams modes [In]
   traceOp (name:dbgOps)
   tell [op1]
 
 -- Also day 5: parameter modes
 
-data Op = Op { opCode :: !Int, paramModes :: !Int }
+data Op = Op { opCode :: !Int, paramModes :: [Mode] }
 
 decodeOp :: Int -> Op
-decodeOp n = Op (n `mod` 100) (n `div` 100)
+decodeOp n = Op (n `mod` 100) (map (mode (n `div` 100)) [0..2])
 
 data Mode = Position | Immediate | Relative deriving (Show,Enum)
 
-mode :: Op -> Int -> Mode
-mode op n = toEnum $ paramModes op `div` 10^n `mod` 10
+mode :: Int -> Int -> Mode
+mode ms n = toEnum $ ms `div` 10^n `mod` 10
 
 data Dir = In | Out
 
 readParams :: MonadState S m =>
-              Op -> [Dir] -> m ([Either Int (Int -> m ())],[String])
-readParams op dirs = unzip <$> zipWithM f [0..] dirs where
-  f n In  = fmap (first Left)  .  inParam (mode op n) =<< readInstr
-  f n Out = fmap (first Right) . outParam (mode op n) =<< readInstr
+              [Mode] -> [Dir] -> m ([Either Int (Int -> m ())],[String])
+readParams modes dirs = unzip <$> zipWithM f modes dirs where
+  f m In  = fmap (first Left)  .  inParam m =<< readInstr
+  f m Out = fmap (first Right) . outParam m =<< readInstr
 
 inParam :: MonadState S m => Mode -> Int -> m (Int,String)
 inParam m s = case m of
@@ -145,18 +144,18 @@ showPos p = "[" ++ show p ++ "]"
 
 -- Day 5 part 2: abstract position handling for branching operations
 
-adjPos :: MonadState S m => (Int -> Int) -> m ()
-adjPos f = modify' $ \s -> s { position = f (position s) }
+adjIP :: MonadState S m => (Int -> Int) -> m ()
+adjIP f = modify' $ \s -> s { instructionPointer = f (instructionPointer s) }
 
 readInstr :: MonadState S m => m Int
-readInstr = readAddr =<< gets position <* adjPos succ
+readInstr = readAddr =<< gets instructionPointer <* adjIP succ
 
 condBranchOp :: (MonadFail m,MonadState S m) =>
-                Op -> (Int -> Bool) -> String -> m ()
-condBranchOp op pr name = do
-  ([Left op1,Left op2],dbgOps) <- readParams op [In,In]
+                [Mode] -> (Int -> Bool) -> String -> m ()
+condBranchOp modes pr name = do
+  ([Left op1,Left op2],dbgOps) <- readParams modes [In,In]
   traceOp (name:dbgOps)
-  when (pr op1) (adjPos (const op2))
+  when (pr op1) (adjIP (const op2))
 
 -- Day 9: support for relative mode
 
@@ -166,9 +165,9 @@ readRel offset = readAddr . (+ offset) =<< gets relativeBase
 writeRel :: MonadState S m => Int -> m (Int -> m ())
 writeRel offset = writeAddr . (+ offset) <$> gets relativeBase
 
-relOp :: (MonadFail m,MonadState S m) => Op -> String -> m ()
-relOp op name = do
-  ([Left delta],dbgOps) <- readParams op [In]
+relOp :: (MonadFail m,MonadState S m) => [Mode] -> String -> m ()
+relOp modes name = do
+  ([Left delta],dbgOps) <- readParams modes [In]
   traceOp (name:dbgOps)
   modify' $ \s -> s { relativeBase = relativeBase s + delta }
 
