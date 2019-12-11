@@ -17,6 +17,7 @@ import Control.Monad.RWS.Lazy
 import Control.Monad.Fail
 import Control.Monad.Extra (whileM)
 import Debug.Trace
+import Data.Coerce
 
 -- Some basic tracing support
 
@@ -43,14 +44,14 @@ evaluateOld prg i j = unVal . (! 0) $ ram $ fst $ execRWS
   (R ())
   (S (prg // [(1,Val i),(2,Val j)]) (error "No input to evaluateOld") 0 0)
 
-newtype M a = M { unM :: RWS R [Int] S a }
+newtype M a = M { unM :: RWS R W S a }
             deriving (Functor,Applicative,Monad,
-                      MonadState S,MonadWriter [Int])
+                      MonadState S,MonadWriter W)
 instance MonadFail M where fail = error
 
 newtype R = R () -- currently unused, but I'll keep the typing for free.
-
-data S = S { ram :: !RAM, inputStream :: [Int]
+type W = [Value]
+data S = S { ram :: !RAM, inputStream :: [Value]
            , instructionPointer :: !Address, relativeBase :: !Address }
 
 _evaluate :: M ()
@@ -76,7 +77,7 @@ _evaluate = whileM $ do
     -- day 9
     9  -> relOp paramModes "INCR"
 
-    x  -> error $ "Unknown opcode " ++ show x
+    x  -> error $ "Unknown opcode " ++ show (unOpCode x)
   pure (opCode /= 99)
 
 binOp :: (MonadFail m,MonadState S m) =>
@@ -92,7 +93,7 @@ haltOp _ name = traceOp [name]
 -- Day 5: I/O and a new ABI
 
 evaluate :: RAM -> [Int] -> [Int]
-evaluate prg i = snd $ evalRWS (unM _evaluate) (R ()) (S prg i 0 0)
+evaluate prg i = coerce $ snd $ evalRWS (unM _evaluate) (R ()) (S prg (coerce i) 0 0)
 
 inOp :: (MonadFail m,MonadState S m) => [Mode] -> String -> m ()
 inOp modes name = do
@@ -100,26 +101,25 @@ inOp modes name = do
   traceOp (name:dbgOps)
   s@S{inputStream = (h:t)} <- get
   put $! s { inputStream = t }
-  out (Val h)
+  out h
 
-outOp :: (MonadFail m,MonadState S m,MonadWriter [Int] m)
+outOp :: (MonadFail m,MonadState S m,MonadWriter W m)
       => [Mode] -> String -> m ()
 outOp modes name = do
   ([Left op1],dbgOps) <- readParams modes [In]
   traceOp (name:dbgOps)
-  tell [unVal op1]
+  tell [op1]
 
 -- Also day 5: parameter modes
 
-data Op = Op { opCode :: !Int, paramModes :: [Mode] }
+data Op = Op { opCode :: !OpCode, paramModes :: [Mode] }
+newtype OpCode = OpCode { unOpCode :: Int } deriving (Eq,Num)
 
 decodeOp :: Value -> Op
-decodeOp (Val n) = Op (n `mod` 100) (map (mode (n `div` 100)) [0..2])
+decodeOp (Val n) = Op (OpCode (n `mod` 100)) (map mode [0..2])
+  where mode i = toEnum $ n `div` 10^(i+2) `mod` 10
 
 data Mode = Position | Immediate | Relative deriving (Show,Enum)
-
-mode :: Int -> Int -> Mode
-mode ms n = toEnum $ ms `div` 10^n `mod` 10
 
 data Dir = In | Out
 
@@ -130,19 +130,24 @@ readParams modes dirs = unzip <$> zipWithM f modes dirs where
   f m Out = fmap (first Right) . outParam m =<< readInstr
 
 inParam :: MonadState S m => Mode -> Value -> m (Value,String)
-inParam m (Val s) = case m of
-    Position  -> readAddr (Addr s) >>= \v -> pure (    v,showPos s)
-    Immediate ->                             pure (Val s,show    s)
-    Relative  -> readRel  (Addr s) >>= \v -> pure (    v,showRel s)
+inParam m imm@(Val int) = case m of
+    Position  -> readAddr pos >>= \v -> pure ( v ,showPos pos)
+    Immediate ->                        pure (imm,showImm imm)
+    Relative  -> readRel  pos >>= \v -> pure ( v ,showRel pos)
+  where pos = Addr int
 
 outParam :: MonadState S m => Mode -> Value -> m (Value -> m (),String)
-outParam m (Val t) = case m of
-    Position -> (,showPos t) <$> pure (writeAddr (Addr t))
-    Relative -> (,showRel t) <$>       writeRel  (Addr t)
+outParam m (Val int) = case m of
+    Position -> (,showPos pos) <$> pure (writeAddr pos)
+    Relative -> (,showRel pos) <$>       writeRel  pos
     x -> error $ "Invalid output addressing mode " ++ show x
+  where pos = Addr int
 
-showPos :: Int -> String
-showPos p = "[" ++ show p ++ "]"
+showPos :: Address -> String
+showPos (Addr p) = "[" ++ show p ++ "]"
+
+showImm :: Value -> String
+showImm (Val v) = show v
 
 -- Day 5 part 2: abstract position handling for branching operations
 
@@ -173,7 +178,7 @@ relOp modes name = do
   traceOp (name:dbgOps)
   modify' $ \s -> s { relativeBase = relativeBase s + Addr delta }
 
-showRel :: Int -> String
+showRel :: Address -> String
 showRel = ('R' :) . showPos
 
 -- Also day 9: memory is now infinite in natural addresses.
