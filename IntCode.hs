@@ -30,6 +30,7 @@ traceOp | traceOps = traceM . intercalate ","
 
 -- Day 2: the initial IntCode machine
 
+newtype Address = Addr { unAddr :: Int } deriving (Eq,Ord,Num)
 newtype Value = Val { unVal :: Int } deriving (Eq,Ord,Num)
 type RAM = Vector Value
 
@@ -50,7 +51,7 @@ instance MonadFail M where fail = error
 newtype R = R () -- currently unused, but I'll keep the typing for free.
 
 data S = S { ram :: !RAM, inputStream :: [Int]
-           , instructionPointer :: !Int, relativeBase :: !Int }
+           , instructionPointer :: !Address, relativeBase :: !Address }
 
 _evaluate :: M ()
 _evaluate = whileM $ do
@@ -130,14 +131,14 @@ readParams modes dirs = unzip <$> zipWithM f modes dirs where
 
 inParam :: MonadState S m => Mode -> Value -> m (Value,String)
 inParam m (Val s) = case m of
-    Position  -> readAddr s >>= \v -> pure (v,showPos s)
-    Immediate ->                      pure (Val s,show    s)
-    Relative  -> readRel  s >>= \v -> pure (v,showRel s)
+    Position  -> readAddr (Addr s) >>= \v -> pure (    v,showPos s)
+    Immediate ->                             pure (Val s,show    s)
+    Relative  -> readRel  (Addr s) >>= \v -> pure (    v,showRel s)
 
 outParam :: MonadState S m => Mode -> Value -> m (Value -> m (),String)
 outParam m (Val t) = case m of
-    Position -> (,showPos t) <$> pure (writeAddr t)
-    Relative -> (,showRel t) <$>       writeRel  t
+    Position -> (,showPos t) <$> pure (writeAddr (Addr t))
+    Relative -> (,showRel t) <$>       writeRel  (Addr t)
     x -> error $ "Invalid output addressing mode " ++ show x
 
 showPos :: Int -> String
@@ -145,45 +146,46 @@ showPos p = "[" ++ show p ++ "]"
 
 -- Day 5 part 2: abstract position handling for branching operations
 
-adjIP :: MonadState S m => (Int -> Int) -> m ()
+adjIP :: MonadState S m => (Address -> Address) -> m ()
 adjIP f = modify' $ \s -> s { instructionPointer = f (instructionPointer s) }
 
 readInstr :: MonadState S m => m Value
-readInstr = readAddr =<< gets instructionPointer <* adjIP succ
+readInstr = readAddr =<< gets instructionPointer <* adjIP (+1)
 
 condBranchOp :: (MonadFail m,MonadState S m) =>
                 [Mode] -> (Value -> Bool) -> String -> m ()
 condBranchOp modes pr name = do
   ([Left op1,Left (Val op2)],dbgOps) <- readParams modes [In,In]
   traceOp (name:dbgOps)
-  when (pr op1) (adjIP (const op2))
+  when (pr op1) (adjIP (const (Addr op2)))
 
 -- Day 9: support for relative mode
 
-readRel :: MonadState S m => Int -> m Value
+readRel :: MonadState S m => Address -> m Value
 readRel offset = readAddr . (+ offset) =<< gets relativeBase
 
-writeRel :: MonadState S m => Int -> m (Value -> m ())
+writeRel :: MonadState S m => Address -> m (Value -> m ())
 writeRel offset = writeAddr . (+ offset) <$> gets relativeBase
 
 relOp :: (MonadFail m,MonadState S m) => [Mode] -> String -> m ()
 relOp modes name = do
   ([Left (Val delta)],dbgOps) <- readParams modes [In]
   traceOp (name:dbgOps)
-  modify' $ \s -> s { relativeBase = relativeBase s + delta }
+  modify' $ \s -> s { relativeBase = relativeBase s + Addr delta }
 
 showRel :: Int -> String
 showRel = ('R' :) . showPos
 
 -- Also day 9: memory is now infinite in natural addresses.
 
-readAddr :: MonadState S m => Int -> m Value
-readAddr a | a < 0 = error $ "Read from negative address " ++ show a
-readAddr addr = fromMaybe 0 . (!? addr) <$> gets ram
+readAddr :: MonadState S m => Address -> m Value
+readAddr a | a < 0 = error $ "Read from negative address " ++ show (unAddr a)
+readAddr (Addr a) = fromMaybe 0 . (!? a) <$> gets ram
 
-writeAddr :: MonadState S m => Int -> Value -> m ()
-writeAddr t n | n < 0 = error $ "Write at negative address " ++ show (t,unVal n)
-writeAddr t n = do
+writeAddr :: MonadState S m => Address -> Value -> m ()
+writeAddr t n | n < 0 = error $ "Write at negative address " ++
+                                show (unAddr t,unVal n)
+writeAddr (Addr t) n = do
   s@S{ram = v} <- get
   let v' | t < V.length v = v
          | otherwise = v <> V.replicate (t - V.length v + 1) 0
