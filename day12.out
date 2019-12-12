@@ -1,0 +1,13 @@
+After 1000 steps:
+Body {pos = V3 {x = 26, y = 38, z = 12}, vel = V3 {x = 17, y = 16, z = -15}}
+Body {pos = V3 {x = -66, y = 1, z = -22}, vel = V3 {x = -6, y = -9, z = 0}}
+Body {pos = V3 {x = 33, y = 41, z = 54}, vel = V3 {x = 6, y = -7, z = 17}}
+Body {pos = V3 {x = 50, y = -85, z = -58}, vel = V3 {x = -17, y = 0, z = -2}}
+Energy after 1000 steps:
+((76,48),3648)
+((89,15),1335)
+((128,30),3840)
+((193,19),3667)
+Sum of total energy: 12490
+Axis periods: [84032,161428,231614]
+Global period: 392733896255168
