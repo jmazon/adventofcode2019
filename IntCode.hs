@@ -5,7 +5,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TupleSections #-}
 
-module IntCode (getIntCode,evaluateOld,evaluate) where
+module IntCode (getIntCode,getIntCodeFromFile,evaluateOld,evaluate) where
 
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
@@ -18,6 +18,7 @@ import Control.Monad.Fail
 import Control.Monad.Extra (whileM)
 import Debug.Trace
 import Data.Coerce
+import System.IO
 
 -- Some basic tracing support
 
@@ -35,8 +36,14 @@ newtype Address = Addr { unAddr :: Int } deriving (Eq,Ord,Num)
 newtype Value = Val { unVal :: Int } deriving (Eq,Ord,Num)
 type RAM = Vector Value
 
+readIntCode :: String -> RAM
+readIntCode = V.fromList . map (Val . read) . linesBy (== ',')
+
+getIntCodeFromFile :: FilePath -> IO RAM
+getIntCodeFromFile f = readIntCode <$> readFile f
+
 getIntCode :: IO RAM
-getIntCode = V.fromList . map (Val . read) . linesBy (== ',') <$> getContents
+getIntCode = readIntCode <$> getContents
 
 evaluateOld :: RAM -> Int -> Int -> Int
 evaluateOld prg i j = unVal . (! 0) $ ram $ fst $ execRWS
@@ -99,7 +106,7 @@ inOp :: (MonadFail m,MonadState S m) => [Mode] -> String -> m ()
 inOp modes name = do
   ([Right out],dbgOps) <- readParams modes [Out]
   traceOp (name:dbgOps)
-  s@S{inputStream = (h:t)} <- get
+  s@S{inputStream = h:t} <- get
   put $! s { inputStream = t }
   out h
 
@@ -188,7 +195,7 @@ readAddr a | a < 0 = error $ "Read from negative address " ++ show (unAddr a)
 readAddr (Addr a) = fromMaybe 0 . (!? a) <$> gets ram
 
 writeAddr :: MonadState S m => Address -> Value -> m ()
-writeAddr t n | n < 0 = error $ "Write at negative address " ++
+writeAddr t n | t < 0 = error $ "Write at negative address " ++
                                 show (unAddr t,unVal n)
 writeAddr (Addr t) n = do
   s@S{ram = v} <- get

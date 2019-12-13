@@ -3,7 +3,7 @@
 set -e
 
 if [[ $# > 0 ]]; then INTCODE_DAYS="$1"
-else INTCODE_DAYS="02 05 07 09"; fi
+else INTCODE_DAYS="02 05 07 09 11"; fi
 
 for d in $INTCODE_DAYS; do
     [[ -r day$d.hs ]] || { echo "No .hs source for day $d" >&2; exit 2; }
