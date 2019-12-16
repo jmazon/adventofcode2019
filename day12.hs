@@ -64,6 +64,10 @@ main = do
 -- This period calculation scheme assumes “a” previous state is “the”
 -- initial state.  It happens to work for this AoC, but isn't strict
 -- in the question asked.  Maybe in a future day?
+
+-- Answering myself later on: actually it's strict; “a” state has to
+-- be “the” state.  It's provable.  What I failed to consider back
+-- then is the importance of starting with immobile planets.
 period st0 = length . unfoldr f $ (st0,S.empty) where
   f (st,s) | st `S.member` s = assert (st == st0) Nothing
            | otherwise = Just ((),(step st,st `S.insert` s))
