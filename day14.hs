@@ -4,14 +4,13 @@ import           Data.Map.Strict (Map,(!))
 import           Control.Monad.RWS.Strict
 import           Text.Regex.PCRE
 
-readRecipe = M.fromList . map readReaction . lines where
-  readReaction l = (product,(stoichiometry,ingredients)) where
-    ((product,stoichiometry):ingredients) = parseIngredients $
-                                            reverse shoppingList
-    parseIngredients ((i,n):is) = (i,read n) : parseIngredients is
-    parseIngredients [] = []
-    shoppingList = zip (getAllTextMatches $ l =~ "[A-Z]+")
-                       (getAllTextMatches $ l =~ "[0-9]+")
+readReaction l = (product,(stoichiometry,ingredients)) where
+  ((product,stoichiometry):ingredients) = parseIngredients $
+                                          reverse shoppingList
+  parseIngredients ((i,n):is) = (i,read n) : parseIngredients is
+  parseIngredients [] = []
+  shoppingList = zip (getAllTextMatches $ l =~ "[A-Z]+")
+                     (getAllTextMatches $ l =~ "[0-9]+")
 
 consume quantity "ORE" = tell (Sum quantity)
 consume quantity product = do
@@ -30,7 +29,7 @@ bsearch f goal = go where
     where mid = (ok + excess) `div` 2
 
 main = do
-  recipe <- readRecipe <$> getContents
+  recipe <- M.fromList . map readReaction . lines <$> getContents
   let oreCost fuel = getSum $ snd $ evalRWS (consume fuel "FUEL") recipe M.empty
       unitOreCost = oreCost 1
       oreCapacity = 1000000000000
