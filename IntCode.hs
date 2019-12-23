@@ -1,11 +1,15 @@
+{-# OPTIONS_GHC -Wno-deprecations #-}
+
 -- TODO: eliminate MonadFail (make readParams take static vector)
 
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE TemplateHaskell #-}
 
-module IntCode (getIntCode,getIntCodeFromFile,evaluateOld,evaluate) where
+module IntCode (RAM,getIntCode,getIntCodeFromFile,evaluateOld,evaluate,evaluateF,evaluateT,IntCodeF(..),Value(..)) where
 
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
@@ -14,11 +18,26 @@ import Data.List.Split (linesBy)
 import Data.List (intercalate)
 import Control.Arrow
 import Control.Monad.RWS.Lazy
+import Control.Monad.State.Strict
 import Control.Monad.Fail
+import Control.Monad.Error
+import Control.Monad.Free.TH
+import Control.Monad.Trans.Free
 import Control.Monad.Extra (whileM)
 import Debug.Trace
 import Data.Coerce
 import System.IO
+
+newtype Address = Addr { unAddr :: Int } deriving (Eq,Ord,Num)
+newtype Value = Val { unVal :: Int } deriving (Eq,Ord,Num)
+type RAM = Vector Value
+
+-- These are for the free monad interface, but have to be up here for
+-- Template Haskell reasons.
+data IntCodeF a = Input (Value -> a) | Output Value a deriving Functor
+makeFree ''IntCodeF
+-- Please pardon the interruption.
+
 
 -- Some basic tracing support
 
@@ -32,10 +51,6 @@ traceOp | traceOps = traceM . intercalate ","
 
 -- Day 2: the initial IntCode machine
 
-newtype Address = Addr { unAddr :: Int } deriving (Eq,Ord,Num)
-newtype Value = Val { unVal :: Int } deriving (Eq,Ord,Num)
-type RAM = Vector Value
-
 readIntCode :: String -> RAM
 readIntCode = V.fromList . map (Val . read) . linesBy (== ',')
 
@@ -47,22 +62,22 @@ getIntCode = readIntCode <$> getContents
 
 evaluateOld :: RAM -> Int -> Int -> Int
 evaluateOld prg i j = unVal . (! 0) $ ram $ fst $ execRWS
-  (unM _evaluate)
-  (R ())
-  (S (prg // [(1,Val i),(2,Val j)]) (error "No input to evaluateOld") 0 0)
+  (unM $ runIntCodeInRW evaluateGeneric)
+  (error "No input to evaluateOld")
+  (S (prg // [(1,Val i),(2,Val j)]) 0 0)
 
 newtype M a = M { unM :: RWS R W S a }
             deriving (Functor,Applicative,Monad,
-                      MonadState S,MonadWriter W)
+                      MonadReader R,MonadState S,MonadWriter W)
 instance MonadFail M where fail = error
 
-newtype R = R () -- currently unused, but I'll keep the typing for free.
+type R = [Value]
 type W = [Value]
-data S = S { ram :: !RAM, inputStream :: [Value]
+data S = S { ram :: !RAM
            , instructionPointer :: !Address, relativeBase :: !Address }
 
-_evaluate :: M ()
-_evaluate = whileM $ do
+evaluateGeneric :: (MonadFree IntCodeF m,MonadFail m,MonadState S m) => m ()
+evaluateGeneric = whileM $ do
   -- traceState && traceShow (v,r,p) False = undefined
   Op {opCode,paramModes} <- decodeOp <$> readInstr
 
@@ -100,22 +115,22 @@ haltOp _ name = traceOp [name]
 -- Day 5: I/O and a new ABI
 
 evaluate :: RAM -> [Int] -> [Int]
-evaluate prg i = coerce $ snd $ evalRWS (unM _evaluate) (R ()) (S prg (coerce i) 0 0)
+evaluate prg i = coerce $ snd $
+  evalRWS (unM $ runIntCodeInRW evaluateGeneric) (coerce i) (S prg 0 0)
 
-inOp :: (MonadFail m,MonadState S m) => [Mode] -> String -> m ()
+inOp :: (MonadFree IntCodeF m,MonadFail m,MonadState S m)
+     => [Mode] -> String -> m ()
 inOp modes name = do
   ([Right out],dbgOps) <- readParams modes [Out]
   traceOp (name:dbgOps)
-  s@S{inputStream = h:t} <- get
-  put $! s { inputStream = t }
-  out h
+  input >>= out
 
-outOp :: (MonadFail m,MonadState S m,MonadWriter W m)
+outOp :: (MonadFree IntCodeF m,MonadFail m,MonadState S m)
       => [Mode] -> String -> m ()
 outOp modes name = do
   ([Left op1],dbgOps) <- readParams modes [In]
   traceOp (name:dbgOps)
-  tell [op1]
+  output op1
 
 -- Also day 5: parameter modes
 
@@ -203,3 +218,24 @@ writeAddr (Addr t) n = do
          | otherwise = v <> V.replicate (t - V.length v + 1) 0
       v'' = v' // [(t,n)]
   n `seq` v'' `seq` put s { ram = v'' }
+
+-- This would have been really needed to make my breakout (day 13)
+-- solution less of a kludge, but I didn't get to implementing in
+-- until late day 16.  Mmm.  to *start* implementing it.
+
+-- Anyway: convert interpreter from the stream to stream interface to
+-- a free monad one.  But keep the stream interface, of course, it's
+-- perfect for e.g. day 5.  Just implement in terms of the free monad
+-- one instead.
+
+runIntCodeInRW :: (MonadReader [Value] m,MonadWriter [Value] m)
+               => FreeT IntCodeF m a -> m a
+runIntCodeInRW = iterT run where
+  run (Input f) = local tail . f =<< asks head
+  run (Output i f) = tell [i] >> f
+
+evaluateF :: RAM -> Free IntCodeF ()
+evaluateF prg = evaluateT prg
+
+evaluateT :: Monad m => RAM -> FreeT IntCodeF m ()
+evaluateT prg = fmap (either error id) $ runErrorT $ evalStateT (evaluateGeneric) (S prg 0 0)
