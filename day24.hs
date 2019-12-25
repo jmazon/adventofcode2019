@@ -26,9 +26,19 @@ firstRepeat f = go S.empty where
 
 step :: Array (Int,Int) Bool -> Array (Int,Int) Bool
 step grid = listArray (bounds grid) $ map cell (indices grid) where
-  cell p@(i,j) | grid!p = neighborCount == 1
-               | otherwise = neighborCount == 1 || neighborCount == 2
-    where neighborCount = length $ filter (grid!) $ filter (inRange (bounds grid)) [(i-1,j),(i,j+1),(i+1,j),(i,j-1)]
+  cell p | grid!p = neighborCount == 1
+         | otherwise = neighborCount == 1 || neighborCount == 2
+    where neighborCount = length $ filter (grid!) $ euclidianNeighbors p
+
+type EPos = (Int,Int)
+type PPos = (Int,EPos)
+
+layoutBounds :: (EPos,EPos)
+layoutBounds = ((-2,-2),(2,2))
+
+euclidianNeighbors :: EPos -> [EPos]
+euclidianNeighbors (i,j) = filter (inRange layoutBounds)
+  [(i-1,j),(i,j+1),(i+1,j),(i,j-1)]
 
 stepp :: Array (Int,(Int,Int)) Bool -> Array (Int,(Int,Int)) Bool
 stepp gridd = listArray (bounds gridd) $ map cell (indices gridd) where
@@ -36,16 +46,20 @@ stepp gridd = listArray (bounds gridd) $ map cell (indices gridd) where
          | gridd!p = neighborCount == 1
          | otherwise = neighborCount == 1 || neighborCount == 2
     where neighborCount | abs (fst p) == 200 = 0
-                        | otherwise = length $ filter (gridd!) $ concat [leftNeighbor p,upNeighbor p,rightNeighbor p,downNeighbor p]
-          leftNeighbor (d,(_,-2)) = [(d-1,(0,-1))]
-          leftNeighbor (d,(0,1)) = [(d+1,(i,2)) | i <- [-2..2]]
-          leftNeighbor (d,(i,j)) = [(d,(i,j-1))]
-          upNeighbor (d,(-2,_)) = [(d-1,(-1,0))]
-          upNeighbor (d,(1,0)) = [(d+1,(2,j)) | j <- [-2..2]]
-          upNeighbor (d,(i,j)) = [(d,(i-1,j))]
-          rightNeighbor (d,(_,2)) = [(d-1,(0,1))]
-          rightNeighbor (d,(0,-1)) = [(d+1,(i,-2)) | i <- [-2..2]]
-          rightNeighbor (d,(i,j)) = [(d,(i,j+1))]
-          downNeighbor (d,(2,_)) = [(d-1,(1,0))]
-          downNeighbor (d,(-1,0)) = [(d+1,(-2,j)) | j <- [-2..2]]
-          downNeighbor (d,(i,j)) = [(d,(i+1,j))]
+                        | otherwise = length $ filter (gridd!) $ plutonianNeighbors p
+
+plutonianNeighbors :: PPos -> [PPos]
+plutonianNeighbors p = concat
+  [leftNeighbor p,upNeighbor p,rightNeighbor p,downNeighbor p]
+  where leftNeighbor (d,(_,-2)) = [(d-1,(0,-1))]
+        leftNeighbor (d,(0,1)) = [(d+1,(i,2)) | i <- [-2..2]]
+        leftNeighbor (d,(i,j)) = [(d,(i,j-1))]
+        upNeighbor (d,(-2,_)) = [(d-1,(-1,0))]
+        upNeighbor (d,(1,0)) = [(d+1,(2,j)) | j <- [-2..2]]
+        upNeighbor (d,(i,j)) = [(d,(i-1,j))]
+        rightNeighbor (d,(_,2)) = [(d-1,(0,1))]
+        rightNeighbor (d,(0,-1)) = [(d+1,(i,-2)) | i <- [-2..2]]
+        rightNeighbor (d,(i,j)) = [(d,(i,j+1))]
+        downNeighbor (d,(2,_)) = [(d-1,(1,0))]
+        downNeighbor (d,(-1,0)) = [(d+1,(-2,j)) | j <- [-2..2]]
+        downNeighbor (d,(i,j)) = [(d,(i+1,j))]
