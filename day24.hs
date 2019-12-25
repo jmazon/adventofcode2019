@@ -55,17 +55,15 @@ instance HasNeighbors PPos where neighbors = plutonianNeighbors
 
 plutonianNeighbors :: PPos -> [PPos]
 plutonianNeighbors (_,(0,0)) = []
-plutonianNeighbors p = filter (inRange plutonianBounds) $ concat
-  [leftNeighbor p,upNeighbor p,rightNeighbor p,downNeighbor p]
-  where leftNeighbor (d,(_,-2)) = [(d-1,(0,-1))]
-        leftNeighbor (d,(0,1)) = [(d+1,(i,2)) | i <- [-2..2]]
-        leftNeighbor (d,(i,j)) = [(d,(i,j-1))]
-        upNeighbor (d,(-2,_)) = [(d-1,(-1,0))]
-        upNeighbor (d,(1,0)) = [(d+1,(2,j)) | j <- [-2..2]]
-        upNeighbor (d,(i,j)) = [(d,(i-1,j))]
-        rightNeighbor (d,(_,2)) = [(d-1,(0,1))]
-        rightNeighbor (d,(0,-1)) = [(d+1,(i,-2)) | i <- [-2..2]]
-        rightNeighbor (d,(i,j)) = [(d,(i,j+1))]
-        downNeighbor (d,(2,_)) = [(d-1,(1,0))]
-        downNeighbor (d,(-1,0)) = [(d+1,(-2,j)) | j <- [-2..2]]
-        downNeighbor (d,(i,j)) = [(d,(i+1,j))]
+plutonianNeighbors p = filter (inRange plutonianBounds) $
+                       concatMap (neighbor p) [(0,-1),(-1,0),(0,1),(1,0)]
+  where neighbor (d,(i,j)) (di,dj)
+          | (_,(0,0)) <- n = [ (d+1,(-2*di -x*signum dj,-2*dj -x*signum di))
+                             | x <- [-2..2] ]
+          | inRange plutonianBounds n = [n]
+          | otherwise = [(d-1,(di,dj))]
+          where n = (d,(i+di,j+dj))
+
+-- Attempted, not worth it: implementing as a set of positions.
+-- Pros: only the actual extent of infestation is stored.
+-- Cons: the set management costs are too high compared to array.
