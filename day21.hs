@@ -1,12 +1,16 @@
 import IntCode
-import Data.Char
+import Data.Char (ord)
 
+main :: IO ()
 main = do
   prg <- getIntCode
   print $ last $ evaluate prg (encode prg1)
   print $ last $ evaluate prg (encode prg2)
 
+encode :: String -> [Int]
 encode = map ord
+
+prg1,prg2 :: String
 
 -- prg1: J = D & !(A&B&C)
 prg1 = unlines [ "NOT D J"

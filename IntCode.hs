@@ -9,7 +9,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module IntCode (RAM,getIntCode,getIntCodeFromFile,evaluateOld,evaluate,evaluateF,evaluateT,IntCodeF(..),Value(..)) where
+module IntCode (RAM,getIntCode,getIntCodeFromFile,evaluateOld,evaluate,evaluateF,evaluateT,IntCodeF(..),Value(..),Transducer) where
 
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
@@ -26,7 +26,8 @@ import Control.Monad.Trans.Free
 import Control.Monad.Extra (whileM)
 import Debug.Trace
 import Data.Coerce
-import System.IO
+
+type Transducer = [Int] -> [Int]
 
 newtype Address = Addr { unAddr :: Int } deriving (Eq,Ord,Num)
 newtype Value = Val { unVal :: Int } deriving (Eq,Ord,Num)
@@ -114,7 +115,7 @@ haltOp _ name = traceOp [name]
 
 -- Day 5: I/O and a new ABI
 
-evaluate :: RAM -> [Int] -> [Int]
+evaluate :: RAM -> Transducer
 evaluate prg i = coerce $ snd $
   evalRWS (unM $ runIntCodeInRW evaluateGeneric) (coerce i) (S prg 0 0)
 
@@ -139,7 +140,7 @@ newtype OpCode = OpCode { unOpCode :: Int } deriving (Eq,Num)
 
 decodeOp :: Value -> Op
 decodeOp (Val n) = Op (OpCode (n `mod` 100)) (map mode [0..2])
-  where mode i = toEnum $ n `div` 10^(i+2) `mod` 10
+  where mode i = toEnum $ n `div` 10^(i+2 :: Int) `mod` 10
 
 data Mode = Position | Immediate | Relative deriving (Show,Enum)
 

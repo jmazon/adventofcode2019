@@ -1,5 +1,6 @@
 import IntCode
 
+main :: IO ()
 main = do
   prg <- getIntCode
   print $ evaluate prg [1]

@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 import IntCode
 
 import           Data.Complex
@@ -8,10 +10,13 @@ import           Control.Applicative (liftA2)
 import           Control.Arrow       ((***),(&&&))
 import           Control.Monad       (forM_)
 
+i :: Complex Double
 i = 0 :+ 1
+
 instance Ord n => Ord (Complex n) where
   compare = liftA2 (<>) (compare `on` realPart) (compare `on` imagPart)
 
+robot :: RAM -> Bool -> M.Map (Complex Double) Bool
 robot prg startColor = result where
   commandStream = evaluate prg cameraStream
   (cameraStream,~[result]) = partitionEithers $
@@ -22,6 +27,9 @@ robot prg startColor = result where
                     let d' = d * if toEnum t then (-i) else i
                     in go (M.insert r (toEnum c) p) (r+d') d' os'
                   [] -> [Right p]
+                  wtf -> error $ "Unexpected in command stream: " ++ show wtf
+
+main :: IO ()
 main = do
   prg <- getIntCode
   let part1 = robot prg False
@@ -33,6 +41,7 @@ main = do
     forM_ [x1..x2] $ \x ->
       putChar $ if M.findWithDefault False (x :+ (-y)) part2 then '*' else ' '
     putChar '\n'
-  
+
+minMax :: Ord a => [a] -> (a,a)
 minMax = (,) <$> minimum <*> maximum
 

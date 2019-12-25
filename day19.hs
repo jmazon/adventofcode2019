@@ -1,8 +1,12 @@
-{-# LANGUAGE FlexibleContexts #-}
+-- TODO: osearch between two best, not 0 and first
+
+{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE FlexibleInstances #-}
 import IntCode
-import Data.List.Split
 
+type Pos = (Int,Int)
+
+main :: IO ()
 main = do
   prg <- getIntCode
   let inBeam (x,y) = toEnum $ head $ evaluate prg [x,y]
@@ -20,10 +24,13 @@ main = do
                      | otherwise = search (osearch (not . inBeam) (x,y+1) (1,0) + (1,0))
         where w = magnitude (z' - z) + 1
               z' = osearch inBeam z (1,-1)
-      (x,y) = search lastClose
-  print $ 10000*x +y-99
-  
+      (xt,yt) = search lastClose
+  print $ 10000*xt +yt-99
+
+magnitude :: Pos -> Int
 magnitude (x,y) = max (abs x) (abs y)
+
+average :: Pos -> Pos -> Pos
 average (a,b) (c,d) = ((a+c) `div` 2,(b+d) `div` 2)
 
 instance Num (Int,Int) where

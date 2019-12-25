@@ -1,6 +1,7 @@
 import IntCode
 import Data.List (find)
 
+main :: IO ()
 main = do
   prg <- getIntCode
   print $ evaluateOld prg 12 2

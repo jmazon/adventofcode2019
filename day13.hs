@@ -25,6 +25,7 @@ parseOutputs :: [Int] -> [Output]
 parseOutputs = map readTile . chunksOf 3
   where readTile [-1,0,s] = Right s
         readTile [ x,y,t] = Left ((y,x),toEnum t)
+        readTile wtf = error $ "Error: got this \"tile\": " ++ show wtf
 
 -- The follow strategy: remember where the paddle is; send a direction
 -- event every time we see the ball.  This happens to work except for
@@ -35,6 +36,7 @@ follow s = unfoldr f (undefined,s) where
   f (px,Left ((_,bx),  Ball):stream) = Just (move px bx,(px,stream))
   f (_ ,Left ((_,px),Paddle):stream) =                f (px,stream)
   f (px,     _              :stream) =                f (px,stream)
+  f (_ ,                   []      ) = Nothing
   move px bx = signum (bx - px)
 
 main :: IO ()

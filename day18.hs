@@ -35,7 +35,7 @@ charFromKey :: KeyId -> Char
 charFromKey (KeyId i) = toEnum (fromEnum 'a' + i)
 
 keyFromChar :: Char -> KeyId
-keyFromChar = KeyId . (subtract $ fromEnum 'a') . fromEnum
+keyFromChar = KeyId . subtract (fromEnum 'a') . fromEnum
 
 ksEmpty :: KeySet -> Bool
 ksEmpty (KeySet ks) = ks == 0
@@ -67,8 +67,8 @@ doorFromCell = doorFromElem <=< elemFromCell
 keyFromCell = keyFromElem <=< elemFromCell
 
 readCell :: Char -> Cell
-readCell '#' = Cell $ Nothing
-readCell '.' = Cell $ Just Nothing
+readCell '#' = Cell Nothing
+readCell '.' = Cell (Just Nothing)
 readCell '@' = startCell
 readCell  c | isAlpha c = Cell $ Just $ Just $
                           (if isUpper c then elemFromDoor else elemFromKey)
@@ -90,7 +90,7 @@ startElem = Start
 
 solve :: Bool -> Grid -> (Int,[Char])
 solve multiply g0 = second (map charFromKey) $
-                   evalState (search startPoss keys) M.empty where
+                    evalState (search startPoss keys) M.empty where
   Just (si,sj) = lookup startCell (map swap (assocs g0))
 
   g | multiply = g0 // [((si-1,sj-1),startCell),((si-1,sj),wallCell),((si-1,sj+1),startCell)
@@ -126,13 +126,13 @@ solve multiply g0 = second (map charFromKey) $
     toNode p i = ([p],i)
     go :: S.Set Pos -> [([Pos],Int)] -> [(Int,KeyId,Int)]
     go _ [] = []
-    go cl ((path@(p:_),i):q) -- | traceShow ks False = undefined
-                | p `S.member` cl = go cl q
-                | Just k <- keyFromCell c, k `ksElem` ks =
-                    (length path - 1,k,i) : go cl' q'
-                | cellIsWall c = go cl' q
-                | Just d <- doorFromCell c, d `ksElem` ks = go cl' q
-                | otherwise = go cl' q'
+    go cl ((path@ ~(p:_),i):q)
+      | p `S.member` cl = go cl q
+      | Just k <- keyFromCell c, k `ksElem` ks =
+          (length path - 1,k,i) : go cl' q'
+      | cellIsWall c = go cl' q
+      | Just d <- doorFromCell c, d `ksElem` ks = go cl' q
+      | otherwise = go cl' q'
       where cl' = S.insert p cl
             c = g!p
             q' = q ++ map ((,i) . (: path)) (filter (`S.notMember` cl) (neighbors p))
