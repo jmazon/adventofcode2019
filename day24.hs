@@ -1,22 +1,25 @@
-import Data.Array
 import qualified Data.Set as S
-import Control.Arrow
+import Data.Array
 import Control.Monad
+
+type Pos = (Int,(Int,Int))
+type Grid = Array Pos Bool
 
 main :: IO ()
 main = do
   raw <- lines <$> getContents
   guard (length raw == 5)
   guard (all ((== 5) . length) raw)
-  let grid = listArray ((-2,-2),(2,2)) $ map (== '#') $ concat raw
-  print $ biodiversity $ firstRepeat step grid
 
-  let gridd = accumArray (flip const) False ((-200,(-2,-2)),(200,(2,2))) $
-              map (first ((,) 0)) (assocs grid)
-  let gridd' = iterate stepp gridd !! 200
-  print $ length $ filter (gridd'!) $ filter ((/= (0,0)) . snd) $ indices gridd'
+  let grid = listArray euclidianBounds $ map (== '#') $ concat raw
+  print $ biodiversity $ firstRepeat (step euclidianNeighbors) grid
 
-biodiversity :: Array (Int,Int) Bool -> Int
+  guard (not $ grid ! (0,(0,0)))
+  let pGrid = accumArray (flip const) False plutonianBounds (assocs grid)
+      pGrid' = iterate (step plutonianNeighbors) pGrid !! 200
+  print $ length $ filter (pGrid'!) $ indices pGrid'
+
+biodiversity :: Grid -> Int
 biodiversity = sum . zipWith (*) (iterate (*2) 1) . map fromEnum . elems
 
 firstRepeat :: Ord a => (a -> a) -> a -> a
@@ -24,32 +27,25 @@ firstRepeat f = go S.empty where
   go cl s | s `S.member` cl = s
           | otherwise = go (S.insert s cl) (f s)
 
-step :: Array (Int,Int) Bool -> Array (Int,Int) Bool
-step grid = listArray (bounds grid) $ map cell (indices grid) where
-  cell p | grid!p = neighborCount == 1
-         | otherwise = neighborCount == 1 || neighborCount == 2
-    where neighborCount = length $ filter (grid!) $ euclidianNeighbors p
+euclidianBounds :: (Pos,Pos)
+euclidianBounds = ((0,(-2,-2)),(0,(2,2)))
 
-type EPos = (Int,Int)
-type PPos = (Int,EPos)
+euclidianNeighbors :: Pos -> [Pos]
+euclidianNeighbors (d,(i,j)) = filter (inRange euclidianBounds)
+  [(d,(i-1,j)),(d,(i,j+1)),(d,(i+1,j)),(d,(i,j-1))]
 
-layoutBounds :: (EPos,EPos)
-layoutBounds = ((-2,-2),(2,2))
+step :: (Pos -> [Pos]) -> Grid -> Grid
+step neighbors grid = listArray (bounds grid) $ map cell (indices grid) where
+  cell p | grid ! p  = neighborCount == 1
+         | otherwise = neighborCount `elem` [1,2]
+    where neighborCount = length $ filter (grid!) $ neighbors p
 
-euclidianNeighbors :: EPos -> [EPos]
-euclidianNeighbors (i,j) = filter (inRange layoutBounds)
-  [(i-1,j),(i,j+1),(i+1,j),(i,j-1)]
+plutonianBounds :: (Pos,Pos)
+plutonianBounds = ((-100,(-2,-2)),(100,(2,2)))
 
-stepp :: Array (Int,(Int,Int)) Bool -> Array (Int,(Int,Int)) Bool
-stepp gridd = listArray (bounds gridd) $ map cell (indices gridd) where
-  cell p | (d,(0,0)) <- p = error ("Evaled at level " ++ show d)
-         | gridd!p = neighborCount == 1
-         | otherwise = neighborCount == 1 || neighborCount == 2
-    where neighborCount | abs (fst p) == 200 = 0
-                        | otherwise = length $ filter (gridd!) $ plutonianNeighbors p
-
-plutonianNeighbors :: PPos -> [PPos]
-plutonianNeighbors p = concat
+plutonianNeighbors :: Pos -> [Pos]
+plutonianNeighbors (_,(0,0)) = []
+plutonianNeighbors p = filter (inRange plutonianBounds) $ concat
   [leftNeighbor p,upNeighbor p,rightNeighbor p,downNeighbor p]
   where leftNeighbor (d,(_,-2)) = [(d-1,(0,-1))]
         leftNeighbor (d,(0,1)) = [(d+1,(i,2)) | i <- [-2..2]]
