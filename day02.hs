@@ -1,9 +1,13 @@
+-- Day 2: 1202 Program Alarm
+
 import IntCode
-import Data.List (find)
 
 main :: IO ()
 main = do
   prg <- getIntCode
+  -- I'm only noticing now, at time of cleanup/rewrite, why those two
+  -- numbers happen to be the program's parameters.  Damn you,
+  -- braindead date format!
   print $ evaluateOld prg 12 2
 
   -- I initially searched (and found and starred part 2) with a bash
@@ -14,6 +18,6 @@ main = do
   -- though the 2D enumeration was kind of elegant.  (and actually
   -- shorter, lol)
   -- https://old.reddit.com/r/adventofcode/comments/e4u0rw/2019_day_2_solutions/f9f9uow/
-  let Just (noun,verb) = find ((== 19690720) . uncurry (evaluateOld prg))
-                         [ (i,j) | i <- [0..99], j <- [0..99] ]
+  let [(noun,verb)] = [ (n,v) | n <- [0..99], v <- [0..99]
+                              , evaluateOld prg n v == 19690720 ]
   print $ 100 * noun + verb

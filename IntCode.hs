@@ -61,7 +61,7 @@ getIntCodeFromFile f = readIntCode <$> readFile f
 getIntCode :: IO RAM
 getIntCode = readIntCode <$> getContents
 
-evaluateOld :: RAM -> Int -> Int -> Int
+evaluateOld :: RAM -> Int -> Int -> Int -- used by day 2
 evaluateOld prg i j = unVal . (! 0) $ ram $ fst $ execRWS
   (unM $ runIntCodeInRW evaluateGeneric)
   (error "No input to evaluateOld")
