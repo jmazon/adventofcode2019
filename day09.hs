@@ -1,7 +1,11 @@
+-- Day 9: Sensor Boost
+
 import IntCode
 
 main :: IO ()
 main = do
   prg <- getIntCode
-  print $ evaluate prg [1]
-  print $ evaluate prg [2]
+  let [boostSignal]       = evaluate prg [1]
+      [signalCoordinates] = evaluate prg [2]
+  print boostSignal
+  print signalCoordinates
