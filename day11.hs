@@ -1,47 +1,51 @@
-{-# OPTIONS_GHC -Wno-orphans #-}
+-- Day 11: Space Police
+{-# LANGUAGE LambdaCase #-}
 
 import IntCode
 
-import           Data.Complex
-import           Data.Function ((&),on)
+import           Data.Function ((&))
 import           Data.Either   (partitionEithers)
 import qualified Data.Map as M
-import           Control.Applicative (liftA2)
-import           Control.Arrow       ((***),(&&&))
-import           Control.Monad       (forM_)
+import           Control.Arrow ((***),(&&&))
+import           Control.Monad (forM_,join)
 
-i :: Complex Double
-i = 0 :+ 1
+data V2 = V { x :: !Int, y :: !Int } deriving (Eq,Ord)
+instance Num V2 where
+  V a b + V c d = V (a+c) (b+d)
+  V a b * V c d = V (a*c - b*d) (b*c + a*d)
+  negate (V a b) = V (negate a) (negate b)
+  abs = undefined
+  signum = undefined
+  fromInteger n = V (fromInteger n) 0
 
-instance Ord n => Ord (Complex n) where
-  compare = liftA2 (<>) (compare `on` realPart) (compare `on` imagPart)
+i :: V2
+i = V 0 1
 
-robot :: RAM -> Bool -> M.Map (Complex Double) Bool
-robot prg startColor = result where
-  commandStream = evaluate prg cameraStream
+paintHull :: RAM -> Bool -> M.Map V2 Bool
+paintHull prg startColor = result where
+  commandStream = map toEnum $ evaluate prg $ map fromEnum cameraStream
   (cameraStream,~[result]) = partitionEithers $
                              go (M.singleton 0 startColor) 0 i commandStream
-  go p r d os = Left (fromEnum (M.findWithDefault False r p)) :
-                case os of
-                  (c:t:os') ->
-                    let d' = d * if toEnum t then (-i) else i
-                    in go (M.insert r (toEnum c) p) (r+d') d' os'
-                  [] -> [Right p]
-                  wtf -> error $ "Unexpected in command stream: " ++ show wtf
+  -- {known hull} {current position} {current heading}
+  go kh pos dir = (Left (M.findWithDefault False pos kh) :) .
+    \case (color:turn:commands) ->
+            let dir' = dir * if turn then (-i) else i
+            in go (M.insert pos color kh) (pos+dir') dir' commands
+          [] -> [Right kh]
+          wtf -> error $ "Unexpected in command stream: " ++ show wtf
 
 main :: IO ()
 main = do
   prg <- getIntCode
-  let part1 = robot prg False
-      part2 = robot prg True
-      ((x1,x2),(y1,y2)) = M.keys part2 & map (realPart &&& imagPart) &
+  let part1 = paintHull prg False
+      part2 = paintHull prg True
+      ((x1,x2),(y1,y2)) = M.keys part2 & map (x &&& y) &
                           unzip & minMax *** minMax
   print $ M.size part1
-  forM_ [-y2 .. -y1] $ \y -> do
-    forM_ [x1..x2] $ \x ->
-      putChar $ if M.findWithDefault False (x :+ (-y)) part2 then '*' else ' '
+  forM_ [-y2 .. -y1] $ \sy -> do
+    forM_ [x1..x2] $ \sx ->
+      putChar $ if M.findWithDefault False (V sx (-sy)) part2 then '*' else ' '
     putChar '\n'
 
 minMax :: Ord a => [a] -> (a,a)
-minMax = (,) <$> minimum <*> maximum
-
+minMax = foldr1 (\(a,b) (c,d) -> (min a c,max b d)) . join zip
