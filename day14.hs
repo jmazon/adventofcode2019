@@ -1,39 +1,67 @@
+-- Day 14: Space Stoichiometry
 {-# LANGUAGE FlexibleContexts #-}
+
 import qualified Data.Map.Strict as M
 import           Data.Map.Strict (Map,(!))
 import           Control.Monad.RWS.Strict
 import           Text.Regex.PCRE
+import           Prelude hiding (product)
 
-readReaction l = (product,(stoichiometry,ingredients)) where
-  ((product,stoichiometry):ingredients) = parseIngredients $
-                                          reverse shoppingList
-  parseIngredients ((i,n):is) = (i,read n) : parseIngredients is
-  parseIngredients [] = []
+type Chemical = String
+type Reactants = [(Chemical,Int)]
+type Grimoire = Map Chemical (Int,Reactants)
+
+readReaction :: String -> (Chemical,(Int,Reactants))
+readReaction l = (product,(stoichiometry,reactants)) where
+  ((product,stoichiometry):reactants) = parseReactants $ reverse shoppingList
+  parseReactants ((i,n):is) = (i,read n) : parseReactants is
+  parseReactants      []    =           []
   shoppingList = zip (getAllTextMatches $ l =~ "[A-Z]+")
                      (getAllTextMatches $ l =~ "[0-9]+")
 
-consume quantity "ORE" = tell (Sum quantity)
-consume quantity product = do
+-- `produce` recursively produces the specified quantity of the
+-- specified reagent.  This is guaranteed to be well-defined as there
+-- is only one reaction to produce it.  It's not guaranteed to
+-- terminate in the current state of the problem statement, as there
+-- could be loops in the reaction tree.  But it doesn't happen here,
+-- this is AoC, not CodeJam.  (this problem is very similar to GCJ
+-- 2018 round 1B problem C “Transmutation”
+-- https://codingcompetitions.withgoogle.com/codejam/round/0000000000007764/000000000003675c)
+-- Reader: the reaction grimoire
+-- Writer: the amount of ORE consumed
+-- State: the current amount of stock of each reagent
+produce :: ( MonadReader Grimoire m
+           , MonadWriter (Sum Int) m
+           , MonadState (Map Chemical Int) m )
+        => Int -> Chemical -> m ()
+produce quantity "ORE" = tell (Sum quantity)
+produce quantity product = do
   create <- (quantity -) <$> gets (M.findWithDefault 0 product)
   when (create > 0) $ do
-    (stoichiometry,ingredients) <- asks (! product)
+    (stoichiometry,reactants) <- asks (! product)
     let q = (create + stoichiometry - 1) `div` stoichiometry
-    forM_ ingredients $ \(i,n) -> consume (q*n) i
+    forM_ reactants $ \(i,n) -> produce (q*n) i
     modify' (M.insertWith (+) product (q*stoichiometry))
   modify' (M.insertWith (+) product (-quantity))
 
-bsearch f goal = go where
-  go ok excess | excess <= ok+1 = ok
-               | f mid <= goal  = go mid excess
-               | otherwise      = go ok  mid
-    where mid = (ok + excess) `div` 2
+oreCost :: Grimoire -> Int -> Chemical -> Int
+oreCost grimoire quantity reagent =
+  getSum $ snd $ evalRWS (produce quantity reagent) grimoire M.empty
 
-main = do
-  recipe <- M.fromList . map readReaction . lines <$> getContents
-  let oreCost fuel = getSum $ snd $ evalRWS (consume fuel "FUEL") recipe M.empty
-      unitOreCost = oreCost 1
-      oreCapacity = 1000000000000
-      minFuel = last $ takeWhile ((< oreCapacity) . oreCost) $
-                iterate (*2) (oreCapacity `div` unitOreCost)
-  print unitOreCost
-  print $ bsearch oreCost oreCapacity minFuel (2*minFuel)
+main :: IO ()
+main = do grimoire <- M.fromList . map readReaction . lines <$> getContents
+          let fuelOreCost q = oreCost grimoire q "FUEL"
+              unitOreCost = fuelOreCost 1
+          print unitOreCost
+
+          let oreCapacity = 1000000000000
+              minFuel = oreCapacity `div` unitOreCost
+              (maxFuel:_) = filter ((> oreCapacity) . fuelOreCost) $
+                            map ((minFuel +) . (2^)) [0 :: Int ..]
+          print $ bsearch fuelOreCost oreCapacity minFuel maxFuel
+
+bsearch :: (Integral a,Ord c) => (a -> c) -> c -> a -> a -> a
+bsearch f goal = go where go ok excess | excess <= ok+1 = ok
+                                       | f mid <= goal  = go mid excess
+                                       | otherwise      = go ok  mid
+                            where mid = (ok + excess) `div` 2
