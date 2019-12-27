@@ -1,6 +1,8 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
+-- Day 17: Set and Forget
+{-# LANGUAGE FlexibleContexts,FlexibleInstances #-}
+
 import IntCode
+
 import Data.Char
 import Data.Array
 import Debug.Trace
@@ -10,6 +12,7 @@ import Control.Arrow
 import Control.Monad
 import qualified Data.Vector
 
+main :: IO ()
 main = do
   prg <- getIntCode
   let view = filter (not . null) $ lines $ map chr $ evaluate prg []
@@ -27,16 +30,21 @@ main = do
   putStr $ map chr $ init outputs
   print $ last outputs
 
+(!?) :: Array (Int,Int) a -> (Int,Int) -> Maybe a
 a !? p | inRange (bounds a) p = Just (a!p)
        | otherwise = Nothing
 
+isIntersection :: Array (Int,Int) Char -> (Int,Int) -> Bool
 isIntersection grid (i,j) = all ((== Just '#') . (grid !?))
                             [(i,j),(i-1,j),(i+1,j),(i,j-1),(i,j+1)]
 
+findIntersections :: Array (Int,Int) Char -> [(Int,Int)]
 findIntersections grid = filter (isIntersection grid) (indices grid)
 
 data Order = Forward | TurnLeft | TurnRight deriving Eq
 
+follow :: Array (Int,Int) Char -> (Int,Int) -> (Int,Int)
+       -> [(Order, Maybe (Int,Int))]
 follow grid pos dir
   | grid !? pos' == Just '#' = (Forward,Just pos) : follow grid pos' dir
   | grid !? (pos + dir * i) == Just '#' = (TurnLeft,Nothing) : follow grid pos (dir * i)
@@ -53,13 +61,16 @@ instance Num (Int,Int) where
   fromInteger = undefined
   negate (a,b) = (-a,-b)
 
+findIntersections2 ::[Maybe (Int,Int)] -> [(Int,Int)]
 findIntersections2 = map head. filter (not . null . tail) . group . sort . catMaybes
 
+rle ::[Order] -> [String]
 rle = map compress . group where
   compress [TurnLeft] = "L"
   compress [TurnRight] = "R"
   compress f@(Forward:_) = show (length f)
 
+factor :: [String] -> [(String,[String],[String],[String])]
 factor xs = do
   let substringsL = map (head &&& uncurry (*) . (length &&& length . head)) . group . sort . filter (not . null) . concatMap inits . tails $ xs
       substrings = listArray (0,length substringsL-1) substringsL
@@ -75,6 +86,7 @@ factor xs = do
   f <- check [strA,strB,strC] (init xs)
   return (f,strA,strB,strC)
 
+bsearch :: Array Int a -> (a -> Int) -> Int -> [a]
 bsearch haystack pred needle = go 0 (snd (bounds haystack) + 1) where
   go a b | b-a <= 1 = mzero
          | otherwise = case compare (pred v) needle of
@@ -84,6 +96,7 @@ bsearch haystack pred needle = go 0 (snd (bounds haystack) + 1) where
     where m = (a+b) `div` 2
           v = haystack!m
 
+validateStr :: [String] -> [()]
 validateStr s = guard (length (intercalate "," s) <= 20)
 
 check :: Eq a => [[a]] -> [a] -> [[Char]]
@@ -96,6 +109,7 @@ check ps = go where
   try xs p i | Just xs' <- stripPrefix p xs = Just (xs',i)
              | otherwise = Nothing
 
+solution :: String
 solution = unlines [ "B,A,B,A,C,A,C,B,C,C"
                    , "L,6,L,12,R,12,L,4"
                    , "R,12,L,10,L,10"
