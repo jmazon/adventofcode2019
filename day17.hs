@@ -3,14 +3,12 @@
 
 import IntCode
 
-import Data.Char
-import Data.Array
-import Debug.Trace
-import Data.List
-import Data.Maybe
-import Control.Arrow
-import Control.Monad
+import           Data.Array
+import           Data.Char     (chr,ord)
+import           Data.List     (group,sort)
+import           Data.Maybe    (catMaybes)
 import qualified Data.Vector
+import           Control.Monad (guard)
 
 main :: IO ()
 main = do
@@ -22,12 +20,11 @@ main = do
       [startPos] = filter ((`elem` "^v<>") . (grid !)) (indices grid)
       startDir | (grid!startPos) == '^' = (-1,0)
       intersections = findIntersections grid
-      (orders,path) = unzip $ follow grid startPos startDir
+      (_,path) = unzip $ follow grid startPos startDir
       intersections2 = findIntersections2 path
       outputs = evaluate (prg Data.Vector.// [(0,2)]) $ map ord solution
+  guard $ intersections == intersections2
   print $ sum $ map (uncurry (*)) intersections
-  print $ sum $ map (uncurry (*)) intersections2
-  putStr $ map chr $ init outputs
   print $ last outputs
 
 (!?) :: Array (Int,Int) a -> (Int,Int) -> Maybe a
@@ -41,7 +38,7 @@ isIntersection grid (i,j) = all ((== Just '#') . (grid !?))
 findIntersections :: Array (Int,Int) Char -> [(Int,Int)]
 findIntersections grid = filter (isIntersection grid) (indices grid)
 
-data Order = Forward | TurnLeft | TurnRight deriving Eq
+data Order = Forward | TurnLeft | TurnRight deriving (Eq,Show)
 
 follow :: Array (Int,Int) Char -> (Int,Int) -> (Int,Int)
        -> [(Order, Maybe (Int,Int))]
@@ -64,51 +61,9 @@ instance Num (Int,Int) where
 findIntersections2 ::[Maybe (Int,Int)] -> [(Int,Int)]
 findIntersections2 = map head. filter (not . null . tail) . group . sort . catMaybes
 
-rle ::[Order] -> [String]
-rle = map compress . group where
-  compress [TurnLeft] = "L"
-  compress [TurnRight] = "R"
-  compress f@(Forward:_) = show (length f)
-
-factor :: [String] -> [(String,[String],[String],[String])]
-factor xs = do
-  let substringsL = map (head &&& uncurry (*) . (length &&& length . head)) . group . sort . filter (not . null) . concatMap inits . tails $ xs
-      substrings = listArray (0,length substringsL-1) substringsL
-      l = length xs
-  a@(strA,nA) <- substringsL
-  validateStr strA
-  (strB,nB) <- delete a substringsL
-  validateStr strB
-  (strC,nC) <- bsearch substrings snd (l-nA-nB-1)
-  validateStr strC
-  guard (strC /= strA)
-  guard (strC /= strB)
-  f <- check [strA,strB,strC] (init xs)
-  return (f,strA,strB,strC)
-
-bsearch :: Array Int a -> (a -> Int) -> Int -> [a]
-bsearch haystack pred needle = go 0 (snd (bounds haystack) + 1) where
-  go a b | b-a <= 1 = mzero
-         | otherwise = case compare (pred v) needle of
-             LT -> go m b
-             EQ -> pure v
-             GT -> go a m
-    where m = (a+b) `div` 2
-          v = haystack!m
-
-validateStr :: [String] -> [()]
-validateStr s = guard (length (intercalate "," s) <= 20)
-
-check :: Eq a => [[a]] -> [a] -> [[Char]]
-check ps = go where
-  go [] = pure []
-  go xs = do
-    (xs',i) <- catMaybes $ zipWith (try xs) ps ['A'..]
-    fmap (i :) (go xs')
-  try :: Eq a => [a] -> [a] -> Char -> Maybe ([a],Char)
-  try xs p i | Just xs' <- stripPrefix p xs = Just (xs',i)
-             | otherwise = Nothing
-
+-- As most, I solved part 2 using my editor's search highlighting
+-- feature.  Here's my solution, as a testament to my second star of
+-- the day!
 solution :: String
 solution = unlines [ "B,A,B,A,C,A,C,B,C,C"
                    , "L,6,L,12,R,12,L,4"
