@@ -1,17 +1,20 @@
 -- Day 17: Set and Forget
-{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFoldable,LambdaCase,TupleSections #-}
 
 import IntCode
 
 import           Data.Array
 import           Data.Char     (chr,ord)
-import           Data.List     (group,sort)
-import           Data.Maybe    (catMaybes)
+import           Data.List     (group,sort,intercalate,intersperse,stripPrefix)
+import           Data.Maybe    (catMaybes,mapMaybe)
 import qualified Data.Vector
+import           Control.Applicative ((<|>))
+import           Text.Regex.PCRE
 
 data Order = Forward | TurnLeft | TurnRight deriving (Eq,Show)
 type Pos = V2 Int
-data V2 n = V { x :: !n, y :: !n } deriving (Eq,Ord,Ix,Foldable)
+type Dir = V2 Int
+data V2 n = V !n !n deriving (Eq,Ord,Ix,Foldable)
 instance Num n => Num (V2 n) where
   (V a b) + (V c d) = V (a+c) (b+d)
   (V a b) * (V c d) = V (a*c - b*d) (a*d + b*c)
@@ -19,6 +22,13 @@ instance Num n => Num (V2 n) where
   signum = undefined
   fromInteger = undefined
   negate (V a b) = V (-a) (-b)
+
+findRobot :: Pos -> Char -> Maybe (Pos,Dir)
+findRobot pos = fmap (pos,) . \case '^' -> Just $ V (-1)  0
+                                    'v' -> Just $ V   1   0
+                                    '<' -> Just $ V   0 (-1)
+                                    '>' -> Just $ V   0   1
+                                    _   -> Nothing
 
 main :: IO ()
 main = do
@@ -28,17 +38,28 @@ main = do
       height = length view
 
   let grid = listArray (V 0 0,V (height-1) (width-1)) $ concat view
-      [startPos] = filter ((`elem` "^v<>") . (grid !)) (indices grid)
-      startDir | (grid!startPos) == '^' = V (-1) 0
-      (_,path) = follow grid startPos startDir
+      [(startPos,startDir)] = mapMaybe (uncurry findRobot) (assocs grid)
+      (orders,path) = follow grid startPos startDir
       intersections = findIntersections path
   print $ sum $ map product intersections
 
-  let outputs = evaluate (prg Data.Vector.// [(0,2)]) $ map ord solution
-  print $ last outputs
+  let solution = factor orders ++ ["n"]
+  print $ last $ evaluate (prg Data.Vector.// [(0,2)]) $ map ord $ unlines solution
 
-follow :: Array Pos Char -> Pos -> Pos -> ([Order],[Pos])
-follow grid pos0 dir0 = (orders,catMaybes path) where
+-- My initial intersection detection algorithm simply checked for
+-- plus-shaped patterns on the grid.  This works on AoC inputs, but
+-- can theoretically be foiled by having e.g. three parallel unspaced
+-- wires.
+--
+-- I wrote a wire-tracing algorithm for part 2, and first tested it by
+-- having it report intersections too.  I'm keeping the latter
+-- intersection detection implementation, as the tracing has to be
+-- done anyway, and gives (unobservably) better results.
+findIntersections :: [Pos] -> [Pos]
+findIntersections = map head. filter (not . null . tail) . group . sort
+
+follow :: Array Pos Char -> Pos -> Dir -> (String,[Pos])
+follow grid pos0 dir0 = (intercalate "," (rle orders 1),catMaybes path) where
   (orders,path) = unzip $ walk pos0 dir0
   walk pos dir
     | walkable pos'         = (Forward, Just pos) : walk pos' dir
@@ -46,29 +67,38 @@ follow grid pos0 dir0 = (orders,catMaybes path) where
     | walkable (pos + dirR) = (TurnRight,Nothing) : walk pos  dirR
     | otherwise = []
     where pos' = pos + dir
-          dirL = dir * i
+          dirL = dir * V 0 1
           dirR = -dirL
-          i = V 0 1
           walkable p = inRange (bounds grid) p && grid!p == '#'
+  rle [] _ = []
+  rle (o:os) d = case o of Forward | (Forward:_) <- os -> rle os $! d+1
+                                   | otherwise         -> show d : rest
+                           TurnLeft  -> "L" : rest
+                           TurnRight -> "R" : rest
+    where rest = rle os (1 :: Int)
 
--- My initial intersection detection algorithm simply checked for
--- plus-shaped patterns on the grid.  This works on AoC inputs, but
--- can theoretically be foiled by having e.g. three parallel unspaced
--- wires.
+-- As did most, I solved part 2 using my editor's search highlighting
+-- feature.  I'm rewriting for more genericity.  That kind of search
+-- on a small space is well suited to PCRE's backtracking abilities.
+-- Ironically, even though it makes finding the movement functions
+-- very easy, mapping them back to the main movement routine isn't as
+-- feasible: PCRE (will match but) won't capture (any but the last in)
+-- a repeated group.  So I'm back to a greedy search, which likely
+-- works fine on AoC inputs, but could fail if a function was a prefix
+-- of another.
 --
--- I wrote a wire-tracing algorithm for part2, and first tested it by
--- having it report intersections too.  I'm keeping the latter
--- intersection detection implementation, as the tracing has to be
--- done anyway, and gives (unobservably) better results.
-findIntersections :: [Pos] -> [Pos]
-findIntersections = map head. filter (not . null . tail) . group . sort
-
--- As most, I solved part 2 using my editor's search highlighting
--- feature.  Here's my solution, as a testament to my second star of
--- that day!
-solution :: String
-solution = unlines [ "B,A,B,A,C,A,C,B,C,C"
-                   , "L,6,L,12,R,12,L,4"
-                   , "R,12,L,10,L,10"
-                   , "L,12,R,12,L,6"
-                   , "n" ]
+-- It's not really worth upgrading until I actually go the extra mile:
+--   • backtrack from a match that gives correct functions but too
+--     long a main routine
+--   • up the ante and find solutions that stray off the single path
+factor :: String -> [String]
+factor orders = intersperse ',' routine : map tail functions where
+  delimited = ',' : orders
+  _:functions = getAllTextSubmatches $ delimited =~
+    "^(,.{1,20})\\1*(,.{1,20})(?:\\1|\\2)*(,.{1,20})(?:\\1|\\2|\\3)*$"
+  Just routine = munch delimited
+  munch [] = pure []
+  munch s = do (f,s') <- foldr1 (<|>) $
+                         zipWith (\l f -> fmap (l,) (stripPrefix f s))
+                           "ABC" functions
+               (f :) <$> munch s'
