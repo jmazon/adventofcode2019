@@ -1,3 +1,5 @@
+-- Day 21: Springdroid Adventure
+
 import IntCode
 import Data.Char (ord)
 
@@ -11,6 +13,12 @@ encode :: String -> [Int]
 encode = map ord
 
 prg1,prg2 :: String
+
+-- I've heard it was possible to optimize these using the fact the
+-- registers remain (or clear, I don't remember) between two runs of
+-- its logic.  I got my stars with logic that unconditionally
+-- overwrote them, and I don't think there's much point in changing
+-- that now.
 
 -- prg1: J = D & !(A&B&C)
 prg1 = unlines [ "NOT D J"
