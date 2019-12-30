@@ -15,8 +15,6 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import Data.Vector (Vector,(!),(!?),(//))
 import Data.List.Split (linesBy)
-import Data.List (intercalate)
-import Control.Arrow
 import Control.Monad.RWS.Lazy
 import Control.Monad.State.Strict
 import Control.Monad.Fail
@@ -24,7 +22,6 @@ import Control.Monad.Error
 import Control.Monad.Free.TH
 import Control.Monad.Trans.Free
 import Control.Monad.Extra (whileM)
-import Debug.Trace
 import Data.Coerce
 
 type Transducer = [Int] -> [Int]
@@ -39,16 +36,6 @@ data IntCodeF a = Input (Value -> a) | Output Value a deriving Functor
 makeFree ''IntCodeF
 -- Please pardon the interruption.
 
-
--- Some basic tracing support
-
-traceState, traceOps :: Bool
-traceState = False
-traceOps = False
-
-traceOp :: Applicative m => [String] -> m ()
-traceOp | traceOps = traceM . intercalate ","
-        | otherwise = const (pure ())
 
 -- Day 2: the initial IntCode machine
 
@@ -79,39 +66,37 @@ data S = S { ram :: !RAM
 
 evaluateGeneric :: (MonadFree IntCodeF m,MonadFail m,MonadState S m) => m ()
 evaluateGeneric = whileM $ do
-  -- traceState && traceShow (v,r,p) False = undefined
   Op {opCode,paramModes} <- decodeOp <$> readInstr
 
   case opCode of
-    1  -> binOp paramModes (+) "ADD"
-    2  -> binOp paramModes (*) "MUL"
-    99 -> haltOp paramModes "HCF"
+    1  -> binOp paramModes (+)
+    2  -> binOp paramModes (*)
+    99 -> haltOp paramModes
 
     -- day 5 part 1
-    3  -> inOp paramModes "IN"
-    4  -> outOp paramModes "OUT"
+    3  -> inOp paramModes
+    4  -> outOp paramModes
 
     -- day 5 part 2
-    5  -> condBranchOp paramModes (/= 0) "BNZ"
-    6  -> condBranchOp paramModes (== 0) "BZ"
-    7  -> binOp paramModes (((Val . fromEnum) .) .  (<)) "LT"
-    8  -> binOp paramModes (((Val . fromEnum) .) . (==)) "EQ"
+    5  -> condBranchOp paramModes (/= 0)
+    6  -> condBranchOp paramModes (== 0)
+    7  -> binOp paramModes (((Val . fromEnum) .) .  (<))
+    8  -> binOp paramModes (((Val . fromEnum) .) . (==))
 
     -- day 9
-    9  -> relOp paramModes "INCR"
+    9  -> relOp paramModes
 
     x  -> error $ "Unknown opcode " ++ show (unOpCode x)
   pure (opCode /= 99)
 
 binOp :: (MonadFail m,MonadState S m) =>
-         [Mode] -> (Value -> Value -> Value) -> String -> m ()
-binOp modes f name = do
-  ([Left op1,Left op2,Right out],dbgOps) <- readParams modes [In,In,Out]
-  traceOp (name:dbgOps)
+         [Mode] -> (Value -> Value -> Value) -> m ()
+binOp modes f = do
+  [Left op1,Left op2,Right out] <- readParams modes [In,In,Out]
   out (op1 `f` op2)
 
-haltOp :: Applicative m => [Mode] -> String -> m ()
-haltOp _ name = traceOp [name]
+haltOp :: Applicative m => [Mode] -> m ()
+haltOp _ = pure ()
 
 -- Day 5: I/O and a new ABI
 
@@ -120,17 +105,15 @@ evaluate prg i = coerce $ snd $
   evalRWS (unM $ runIntCodeInRW evaluateGeneric) (coerce i) (S prg 0 0)
 
 inOp :: (MonadFree IntCodeF m,MonadFail m,MonadState S m)
-     => [Mode] -> String -> m ()
-inOp modes name = do
-  ([Right out],dbgOps) <- readParams modes [Out]
-  traceOp (name:dbgOps)
+     => [Mode] -> m ()
+inOp modes = do
+  [Right out] <- readParams modes [Out]
   input >>= out
 
 outOp :: (MonadFree IntCodeF m,MonadFail m,MonadState S m)
-      => [Mode] -> String -> m ()
-outOp modes name = do
-  ([Left op1],dbgOps) <- readParams modes [In]
-  traceOp (name:dbgOps)
+      => [Mode] -> m ()
+outOp modes = do
+  [Left op1] <- readParams modes [In]
   output op1
 
 -- Also day 5: parameter modes
@@ -147,30 +130,24 @@ data Mode = Position | Immediate | Relative deriving (Show,Enum)
 data Dir = In | Out
 
 readParams :: MonadState S m =>
-              [Mode] -> [Dir] -> m ([Either Value (Value -> m ())],[String])
-readParams modes dirs = unzip <$> zipWithM f modes dirs where
-  f m In  = fmap (first Left)  .  inParam m =<< readInstr
-  f m Out = fmap (first Right) . outParam m =<< readInstr
+              [Mode] -> [Dir] -> m [Either Value (Value -> m ())]
+readParams modes dirs = zipWithM f modes dirs where
+  f m In  = fmap  Left  .  inParam m =<< readInstr
+  f m Out = fmap  Right . outParam m =<< readInstr
 
-inParam :: MonadState S m => Mode -> Value -> m (Value,String)
+inParam :: MonadState S m => Mode -> Value -> m Value
 inParam m imm@(Val int) = case m of
-    Position  -> readAddr pos >>= \v -> pure ( v ,showPos pos)
-    Immediate ->                        pure (imm,showImm imm)
-    Relative  -> readRel  pos >>= \v -> pure ( v ,showRel pos)
+    Position  -> readAddr pos
+    Immediate -> pure imm
+    Relative  -> readRel  pos
   where pos = Addr int
 
-outParam :: MonadState S m => Mode -> Value -> m (Value -> m (),String)
+outParam :: MonadState S m => Mode -> Value -> m (Value -> m ())
 outParam m (Val int) = case m of
-    Position -> (,showPos pos) <$> pure (writeAddr pos)
-    Relative -> (,showRel pos) <$>       writeRel  pos
+    Position -> pure (writeAddr pos)
+    Relative ->       writeRel  pos
     x -> error $ "Invalid output addressing mode " ++ show x
   where pos = Addr int
-
-showPos :: Address -> String
-showPos (Addr p) = "[" ++ show p ++ "]"
-
-showImm :: Value -> String
-showImm (Val v) = show v
 
 -- Day 5 part 2: abstract position handling for branching operations
 
@@ -181,10 +158,9 @@ readInstr :: MonadState S m => m Value
 readInstr = readAddr =<< gets instructionPointer <* adjIP (+1)
 
 condBranchOp :: (MonadFail m,MonadState S m) =>
-                [Mode] -> (Value -> Bool) -> String -> m ()
-condBranchOp modes pr name = do
-  ([Left op1,Left (Val op2)],dbgOps) <- readParams modes [In,In]
-  traceOp (name:dbgOps)
+                [Mode] -> (Value -> Bool) -> m ()
+condBranchOp modes pr = do
+  [Left op1,Left (Val op2)] <- readParams modes [In,In]
   when (pr op1) (adjIP (const (Addr op2)))
 
 -- Day 9: support for relative mode
@@ -195,14 +171,10 @@ readRel offset = readAddr . (+ offset) =<< gets relativeBase
 writeRel :: MonadState S m => Address -> m (Value -> m ())
 writeRel offset = writeAddr . (+ offset) <$> gets relativeBase
 
-relOp :: (MonadFail m,MonadState S m) => [Mode] -> String -> m ()
-relOp modes name = do
-  ([Left (Val delta)],dbgOps) <- readParams modes [In]
-  traceOp (name:dbgOps)
+relOp :: (MonadFail m,MonadState S m) => [Mode] -> m ()
+relOp modes = do
+  [Left (Val delta)] <- readParams modes [In]
   modify' $ \s -> s { relativeBase = relativeBase s + Addr delta }
-
-showRel :: Address -> String
-showRel = ('R' :) . showPos
 
 -- Also day 9: memory is now infinite in natural addresses.
 
