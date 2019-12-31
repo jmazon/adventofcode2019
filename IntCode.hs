@@ -1,5 +1,3 @@
-{-# OPTIONS_GHC -Wno-deprecations #-}
-
 -- TODO: eliminate MonadFail (make readParams take static vector)
 
 {-# LANGUAGE NamedFieldPuns #-}
@@ -11,6 +9,8 @@
 
 module IntCode (RAM,getIntCode,getIntCodeFromFile,evaluateOld,evaluate,evaluateF,evaluateT,IntCodeF(..),Value(..),Transducer) where
 
+import UnsafeError
+
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
 import Data.Vector (Vector,(!),(!?),(//))
@@ -18,7 +18,6 @@ import Data.List.Split (linesBy)
 import Control.Monad.RWS.Lazy
 import Control.Monad.State.Strict
 import Control.Monad.Fail
-import Control.Monad.Error
 import Control.Monad.Free.TH
 import Control.Monad.Trans.Free
 import Control.Monad.Extra (whileM)
@@ -50,14 +49,13 @@ getIntCode = readIntCode <$> getContents
 
 evaluateOld :: RAM -> Int -> Int -> Int -- used by day 2
 evaluateOld prg i j = unVal . (! 0) $ ram $ fst $ execRWS
-  (unM $ runIntCodeInRW evaluateGeneric)
+  (unM $ runUnsafeErrorT $ runIntCodeInRW evaluateGeneric)
   (error "No input to evaluateOld")
   (S (prg // [(1,Val i),(2,Val j)]) 0 0)
 
 newtype M a = M { unM :: RWS R W S a }
             deriving (Functor,Applicative,Monad,
                       MonadReader R,MonadState S,MonadWriter W)
-instance MonadFail M where fail = error
 
 type R = [Value]
 type W = [Value]
@@ -102,7 +100,7 @@ haltOp _ = pure ()
 
 evaluate :: RAM -> Transducer
 evaluate prg i = coerce $ snd $
-  evalRWS (unM $ runIntCodeInRW evaluateGeneric) (coerce i) (S prg 0 0)
+  evalRWS (unM $ runUnsafeErrorT $ runIntCodeInRW evaluateGeneric) (coerce i) (S prg 0 0)
 
 inOp :: (MonadFree IntCodeF m,MonadFail m,MonadState S m)
      => [Mode] -> m ()
@@ -211,4 +209,4 @@ evaluateF :: RAM -> Free IntCodeF ()
 evaluateF prg = evaluateT prg
 
 evaluateT :: Monad m => RAM -> FreeT IntCodeF m ()
-evaluateT prg = fmap (either error id) $ runErrorT $ evalStateT (evaluateGeneric) (S prg 0 0)
+evaluateT prg = runUnsafeErrorT $ evalStateT (evaluateGeneric) (S prg 0 0)
