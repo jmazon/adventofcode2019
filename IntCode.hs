@@ -5,7 +5,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 module IntCode (RAM,getIntCode,getIntCodeFromFile,evaluateOld,evaluate,evaluateF,evaluateT,IntCodeF(..),Value(..),Transducer) where
 
@@ -18,7 +17,6 @@ import Data.List.Split (linesBy)
 import Control.Monad.RWS.Lazy
 import Control.Monad.State.Strict
 import Control.Monad.Fail
-import Control.Monad.Free.TH
 import Control.Monad.Trans.Free
 import Control.Monad.Extra (whileM)
 import Data.Coerce
@@ -28,13 +26,6 @@ type Transducer = [Int] -> [Int]
 newtype Address = Addr { unAddr :: Int } deriving (Eq,Ord,Num)
 newtype Value = Val { unVal :: Int } deriving (Eq,Ord,Num)
 type RAM = Vector Value
-
--- These are for the free monad interface, but have to be up here for
--- Template Haskell reasons.
-data IntCodeF a = Input (Value -> a) | Output Value a deriving Functor
-makeFree ''IntCodeF
--- Please pardon the interruption.
-
 
 -- Day 2: the initial IntCode machine
 
@@ -198,6 +189,14 @@ writeAddr (Addr t) n = do
 -- a free monad one.  But keep the stream interface, of course, it's
 -- perfect for e.g. day 5.  Just implement in terms of the free monad
 -- one instead.
+
+data IntCodeF a = Input (Value -> a) | Output Value a deriving Functor
+
+input :: MonadFree IntCodeF m => m Value
+input = wrap (Input pure)
+
+output :: MonadFree IntCodeF m => Value -> m ()
+output v = wrap (Output v (return ()))
 
 runIntCodeInRW :: (MonadReader [Value] m,MonadWriter [Value] m)
                => FreeT IntCodeF m a -> m a
