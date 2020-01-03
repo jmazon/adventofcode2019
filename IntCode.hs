@@ -4,6 +4,9 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module IntCode (
     RAM
@@ -22,8 +25,9 @@ module IntCode (
   ) where
 
 import Data.Maybe (fromMaybe)
-import qualified Data.Vector as V
-import Data.Vector (Vector,(!),(!?),(//))
+import qualified Data.Vector.Unboxed as V
+import Data.Vector.Unboxed (Vector,(!),(!?),(//))
+import Data.Vector.Unboxed.Deriving
 import Data.List.Split (linesBy)
 import Control.Monad.RWS.Lazy
 import Control.Monad.State.Strict
@@ -34,6 +38,8 @@ import Data.Coerce
 newtype Address = Addr Int deriving (Eq,Ord,Num)
 newtype Value = Val Int deriving (Eq,Ord,Num)
 newtype RAM = RAM (Vector Value)
+
+derivingUnbox "Value" [t| Value -> Int |] [| \(Val v) -> v |] [| Val |]
 
 -- Day 2: the initial IntCode machine
 
