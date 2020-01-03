@@ -36,16 +36,10 @@ getIntCode = readIntCode <$> getContents
 
 evaluateOld :: RAM -> Int -> Int -> Int -- used by day 2
 evaluateOld prg i j = unVal . (! 0) $ ram $ fst $ execRWS
-  (unM $ runIntCodeInRW evaluateGeneric)
+  (runIntCodeInRW evaluateGeneric)
   (error "No input to evaluateOld")
   (S (prg // [(1,Val i),(2,Val j)]) 0 0)
 
-newtype M a = M { unM :: RWS R W S a }
-            deriving (Functor,Applicative,Monad,
-                      MonadReader R,MonadState S,MonadWriter W)
-
-type R = [Value]
-type W = [Value]
 data S = S { ram :: !RAM
            , instructionPointer :: !Address, relativeBase :: !Address }
 
@@ -86,7 +80,7 @@ haltOp _ = pure ()
 
 evaluate :: RAM -> Transducer
 evaluate prg i = coerce $ snd $
-  evalRWS (unM $ runIntCodeInRW evaluateGeneric) (coerce i) (S prg 0 0)
+  evalRWS (runIntCodeInRW evaluateGeneric) (coerce i) (S prg 0 0)
 
 inOp :: (MonadFree IntCodeF m,MonadState S m) => [Mode] -> m ()
 inOp modes = do PStore store :< () <- readParams modes
