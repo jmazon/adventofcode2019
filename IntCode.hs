@@ -23,6 +23,7 @@ module IntCode (
   , runIntF
   , runIntT
 
+  , runEnum
   , runAscii
   , runAscii'
   ) where
@@ -247,8 +248,11 @@ instance (Param p,Params ps) => Params (p :< ps) where
 
 -- Improved interfaces for some recurring themes
 
+runEnum :: (Enum i,Enum o) => RAM -> [i] -> [o]
+runEnum prg = map toEnum . runIntStream prg . map fromEnum
+
 runAscii :: RAM -> String -> String
-runAscii prg = map chr . runIntStream prg . map ord
+runAscii = runEnum
 
 runAscii' :: RAM -> String -> (String,[Int])
 runAscii' prg = first (map chr) . partition (< 128) . runIntStream prg . map ord

@@ -1,6 +1,6 @@
 -- Day 15: Oxygen System
 
-import IntCode (getIntCode,runIntStream)
+import IntCode (getIntCode,runEnum)
 
 import           Data.Map.Strict (Map,(!),empty,insert,insertWith)
 import qualified Data.Set as S
@@ -63,8 +63,8 @@ bfs chart start goal = go S.empty [[start]] where
 main :: IO ()
 main = do
   prg <- getIntCode
-  let statusStream = runIntStream prg $ map fromEnum commandStream
-      (chart,commandStream) = droid startPos $ map toEnum statusStream
+  let statusStream = runEnum prg commandStream
+      (chart,commandStream) = droid startPos statusStream
       startPos = (0,0) -- arbitrary — I just need one
       [pathToOxygen@(oxygenPos:_)] = bfs chart startPos Oxygen
   print $ length pathToOxygen
