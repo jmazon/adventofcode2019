@@ -1,7 +1,7 @@
 -- Day 19: Tractor Beam
 {-# LANGUAGE DeriveFunctor,DeriveFoldable #-}
 
-import IntCode
+import IntCode (getIntCode,runIntStream)
 
 type Pos = V2 Int
 data V2 n = V !n !n deriving (Functor,Foldable)
@@ -27,7 +27,7 @@ average z1 z2 = fmap (`div` 2) (z1 + z2)
 main :: IO ()
 main = do
   prg <- getIntCode
-  let inBeam (V x y) = toEnum $ head $ evaluate prg [x,y]
+  let inBeam (V x y) = toEnum o where [o] = runIntStream prg [x,y]
       closeBeam = filter inBeam [ V x y | y <- [0..49], x <- [0..49] ]
       lastClose = last closeBeam
   print $ length closeBeam

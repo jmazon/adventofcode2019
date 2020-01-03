@@ -1,7 +1,7 @@
 -- Day 13: Care Package
 {-# LANGUAGE LambdaCase,DeriveAnyClass #-}
 
-import IntCode
+import IntCode (getIntCode,getIntCodeFromFile,poke,runIntStream)
 
 import Control.Concurrent
 import Control.Exception  (Exception,bracket,handle,throwIO)
@@ -11,7 +11,6 @@ import Data.Either        (lefts,rights)
 import Data.IORef
 import Data.List          (unfoldr)
 import Data.List.Split    (chunksOf)
-import Data.Vector        ((//))
 import System.Environment (getArgs)
 import System.Exit        (exitFailure)
 import System.IO          (hPutStrLn,stderr)
@@ -66,18 +65,18 @@ main = do
       hPutStrLn stderr "       {prg} {--visual|--interactive} input"
       exitFailure
 
-  prg <- get
-  let display0 = lefts $ parseOutputs $ evaluate prg []
+  game <- get
+  let display0 = lefts $ parseOutputs $ runIntStream game []
       initialBlockCount = length $ filter ((== Block) . snd) display0
       blockReport = "Block tiles on initial screen: " ++ show initialBlockCount
 
   let height = 1 + maximum (map (fst . fst) display0)
       width  = 1 + maximum (map (snd . fst) display0)
-      hack = prg // [(0,2)]
+      gameForFree = poke game [(0,2)]
 
   let (initialDisplay,updateStream) = splitAt (width * height) $
                                       parseOutputs $
-                                      evaluate hack $
+                                      runIntStream gameForFree $
                                       map tiltToInt controlStream
       controlStream = strategy (reverse initialDisplay ++ updateStream)
 

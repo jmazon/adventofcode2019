@@ -5,7 +5,21 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module IntCode (RAM,getIntCode,getIntCodeFromFile,evaluateOld,evaluate,evaluateF,evaluateT,IntCodeF(..),Value(..),Transducer) where
+module IntCode (
+    RAM
+  , getIntCode
+  , getIntCodeFromFile
+  , poke
+
+  , runPeekPoke
+
+  , Transducer
+  , runIntStream
+
+  , IntCodeF(..)
+  , runIntF
+  , runIntT
+  ) where
 
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
@@ -17,16 +31,14 @@ import Control.Monad.Trans.Free
 import Control.Monad.Extra (whileM)
 import Data.Coerce
 
-type Transducer = [Int] -> [Int]
-
-newtype Address = Addr { unAddr :: Int } deriving (Eq,Ord,Num)
-newtype Value = Val { unVal :: Int } deriving (Eq,Ord,Num)
-type RAM = Vector Value
+newtype Address = Addr Int deriving (Eq,Ord,Num)
+newtype Value = Val Int deriving (Eq,Ord,Num)
+newtype RAM = RAM (Vector Value)
 
 -- Day 2: the initial IntCode machine
 
 readIntCode :: String -> RAM
-readIntCode = V.fromList . map (Val . read) . linesBy (== ',')
+readIntCode = RAM . V.fromList . map (Val . read) . linesBy (== ',')
 
 getIntCodeFromFile :: FilePath -> IO RAM
 getIntCodeFromFile f = readIntCode <$> readFile f
@@ -34,17 +46,21 @@ getIntCodeFromFile f = readIntCode <$> readFile f
 getIntCode :: IO RAM
 getIntCode = readIntCode <$> getContents
 
-evaluateOld :: RAM -> Int -> Int -> Int -- used by day 2
-evaluateOld prg i j = unVal . (! 0) $ ram $ fst $ execRWS
-  (runIntCodeInRW evaluateGeneric)
-  (error "No input to evaluateOld")
-  (S (prg // [(1,Val i),(2,Val j)]) 0 0)
+poke :: RAM -> [(Int,Int)] -> RAM
+poke (RAM r) updates = RAM (r // coerce updates)
+
+runPeekPoke :: RAM -> Int -> Int -> Int -- used by day 2
+runPeekPoke prg i j = v where
+  Val v = r ! 0
+  RAM r = ram $ fst $ execRWS (runIntCodeInRW runGeneric)
+                              (error "runPeekPoke isn't allowed input.")
+                              (S (poke prg [(1,i),(2,j)]) 0 0)
 
 data S = S { ram :: !RAM
            , instructionPointer :: !Address, relativeBase :: !Address }
 
-evaluateGeneric :: (MonadFree IntCodeF m,MonadState S m) => m ()
-evaluateGeneric = whileM $ do
+runGeneric :: (MonadFree IntCodeF m,MonadState S m) => m ()
+runGeneric = whileM $ do
   Op {opCode,paramModes} <- decodeOp <$> readInstr
 
   case opCode of
@@ -78,16 +94,18 @@ haltOp _ = pure ()
 
 -- Day 5: I/O and a new ABI
 
-evaluate :: RAM -> Transducer
-evaluate prg i = coerce $ snd $
-  evalRWS (runIntCodeInRW evaluateGeneric) (coerce i) (S prg 0 0)
+type Transducer = [Int] -> [Int]
+
+runIntStream :: RAM -> Transducer
+runIntStream prg i = coerce $ snd $
+  evalRWS (runIntCodeInRW runGeneric) (coerce i) (S prg 0 0)
 
 inOp :: (MonadFree IntCodeF m,MonadState S m) => [Mode] -> m ()
 inOp modes = do PStore store :< () <- readParams modes
-                store =<< input
+                store . Val =<< input
 
 outOp :: (MonadFree IntCodeF m,MonadState S m) => [Mode] -> m ()
-outOp modes = do PReadVal operand :< () <- readParams modes
+outOp modes = do PReadVal (Val operand) :< () <- readParams modes
                  output operand
 
 -- Also day 5: parameter modes
@@ -148,18 +166,18 @@ relOp modes = do
 -- Also day 9: memory is now infinite in natural addresses.
 
 readAddr :: MonadState S m => Address -> m Value
-readAddr a | a < 0 = error $ "Read from negative address " ++ show (unAddr a)
-readAddr (Addr a) = fromMaybe 0 . (!? a) <$> gets ram
+readAddr (Addr a) | a < 0 = error $ "Read from negative address " ++ show a
+readAddr (Addr a) = fmap (\(RAM r) -> fromMaybe 0  (r !? a)) (gets ram)
 
 writeAddr :: MonadState S m => Address -> Value -> m ()
-writeAddr t n | t < 0 = error $ "Write at negative address " ++
-                                show (unAddr t,unVal n)
+writeAddr (Addr t) (Val n) | t < 0 = error $ "Write at negative address " ++
+                                             show (t,n)
 writeAddr (Addr t) n = do
-  s@S{ram = v} <- get
+  s@S{ram = RAM v} <- get
   let v' | t < V.length v = v
          | otherwise = v <> V.replicate (t - V.length v + 1) 0
       v'' = v' // [(t,n)]
-  n `seq` v'' `seq` put s { ram = v'' }
+  n `seq` v'' `seq` put s { ram = RAM v'' }
 
 -- This would have been really needed to make my breakout (day 13)
 -- solution less of a kludge, but I didn't get to implementing in
@@ -170,25 +188,25 @@ writeAddr (Addr t) n = do
 -- perfect for e.g. day 5.  Just implement in terms of the free monad
 -- one instead.
 
-data IntCodeF a = Input (Value -> a) | Output Value a deriving Functor
+data IntCodeF a = Input (Int -> a) | Output Int a deriving Functor
 
-input :: MonadFree IntCodeF m => m Value
+input :: MonadFree IntCodeF m => m Int
 input = wrap (Input pure)
 
-output :: MonadFree IntCodeF m => Value -> m ()
+output :: MonadFree IntCodeF m => Int -> m ()
 output v = wrap (Output v (return ()))
 
 runIntCodeInRW :: (MonadReader [Value] m,MonadWriter [Value] m)
                => FreeT IntCodeF m a -> m a
 runIntCodeInRW = iterT run where
-  run (Input f) = local tail . f =<< asks head
-  run (Output i f) = tell [i] >> f
+  run (Input f) = asks head >>= \(Val v) -> local tail (f v)
+  run (Output i f) = tell [Val i] >> f
 
-evaluateF :: RAM -> Free IntCodeF ()
-evaluateF = evaluateT
+runIntF :: RAM -> Free IntCodeF ()
+runIntF = runIntT
 
-evaluateT :: Monad m => RAM -> FreeT IntCodeF m ()
-evaluateT prg = evalStateT evaluateGeneric (S prg 0 0)
+runIntT :: Monad m => RAM -> FreeT IntCodeF m ()
+runIntT prg = evalStateT runGeneric (S prg 0 0)
 
 -- I had a generalized function to resolve operation parameters:
 -- readParams :: [Mode] -> [Dir] -> m [Either Value (Value -> m ())]

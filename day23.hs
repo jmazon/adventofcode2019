@@ -1,7 +1,7 @@
 -- Day 23: Category Six
 {-# LANGUAGE FlexibleContexts,RecursiveDo,LambdaCase #-}
 
-import IntCode
+import IntCode (IntCodeF(..),getIntCode,runIntF)
 
 import Data.IntMap.Strict (fromList,(!))
 import Data.Bits          (bit,setBit,clearBit)
@@ -45,15 +45,15 @@ runNIC (sendTo,sem,chan) f self = runReaderT (evalStateT (iterM go f) []) False
               pure (True,-1)
             Just v -> do             -- input requested, queue non-empty
               atomically $ modifyTVar' sem (`setBit` self)
-              pure (False,Val v)
+              pure (False,v)
           local (const idle') (cont v)
         go (Output v cont) = do
           liftIO $ atomically $ modifyTVar' sem (`setBit` self)
           get >>= \case [x,target] -> do       -- output, buffer full
-                          let y = unVal v
+                          let y = v
                           liftIO $ sendTo target (x,y)
                           put []
-                        vs -> put (unVal v:vs) -- output, buffer not full
+                        vs -> put (v:vs) -- output, buffer not full
           local (const False) cont
 
 -- NAT integration to the network and implementation.
@@ -95,7 +95,7 @@ main = do
         nics <- forM [0..49] $ \i -> do
           c <- newTQueueIO
           atomically (writeTQueue c i)
-          void $ forkIO $ runNIC (sendTo,sem,c) (evaluateF prg) i
+          void $ forkIO $ runNIC (sendTo,sem,c) (runIntF prg) i
           return (i,c)
 
         nat <- do

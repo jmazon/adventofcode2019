@@ -1,6 +1,6 @@
 -- Day 11: Space Police
 
-import IntCode
+import IntCode (RAM,getIntCode,runIntStream)
 
 import           Data.Function ((&))
 import qualified Data.Map as M
@@ -21,7 +21,7 @@ i = V 0 1
 
 paintHull :: RAM -> Bool -> M.Map V2 Bool
 paintHull prg startColor = result where
-  commandStream = pairs $ map toEnum $ evaluate prg $ map fromEnum cameraStream
+  commandStream = pairs $ map toEnum $ runIntStream prg $ map fromEnum cameraStream
   (cameraStream,~(result,_,_)) = lazyMapAccumL scan move
                                    (M.singleton 0 startColor,0,i) commandStream
   scan (kh,pos,_) = M.findWithDefault False pos kh -- “known hull”

@@ -1,6 +1,6 @@
 -- Day 25: Cryostasis
 
-import IntCode
+import IntCode (getIntCode,runIntStream)
 import Data.Char
 import Data.Maybe
 import Control.Monad
@@ -44,7 +44,7 @@ main = do
   -- Computed: try all combinations of object drops until one ends the program.
   let objs = mapMaybe ( fmap (unwords . tail) . mfilter ((== "take") . head) .
                         pure . words ) script
-  putStrLn $ last $ lines $ map chr $ evaluate prg $ map ord $ unlines $
+  putStrLn $ last $ lines $ map chr $ runIntStream prg $ map ord $ unlines $
              script ++ concatMap (withoutObjs "north")
                                  (filterM (const [False,True]) objs)
 

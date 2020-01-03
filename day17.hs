@@ -1,14 +1,14 @@
 -- Day 17: Set and Forget
 {-# LANGUAGE DeriveFoldable,LambdaCase,TupleSections #-}
 
-import IntCode
+import IntCode (getIntCode,poke,runIntStream)
 
 import           Data.Array
 import           Data.Char     (chr,ord)
+import           Data.Foldable (asum)
 import           Data.List     (group,sort,intercalate,intersperse,stripPrefix)
 import           Data.Maybe    (catMaybes,mapMaybe)
 import qualified Data.Vector
-import           Control.Applicative ((<|>))
 import           Text.Regex.PCRE
 
 data Order = Forward | TurnLeft | TurnRight deriving (Eq,Show)
@@ -33,7 +33,7 @@ findRobot pos = fmap (pos,) . \case '^' -> Just $ V (-1)  0
 main :: IO ()
 main = do
   prg <- getIntCode
-  let view = filter (not . null) $ lines $ map chr $ evaluate prg []
+  let view = filter (not . null) $ lines $ map chr $ runIntStream prg []
       width = length (head view)
       height = length view
 
@@ -44,7 +44,7 @@ main = do
   print $ sum $ map product intersections
 
   let solution = factor orders ++ ["n"]
-  print $ last $ evaluate (prg Data.Vector.// [(0,2)]) $ map ord $ unlines solution
+  print $ last $ runIntStream (poke prg [(0,2)]) $ map ord $ unlines solution
 
 -- My initial intersection detection algorithm simply checked for
 -- plus-shaped patterns on the grid.  This works on AoC inputs, but
@@ -98,7 +98,7 @@ factor orders = intersperse ',' routine : map tail functions where
     "^(,.{1,20})\\1*(,.{1,20})(?:\\1|\\2)*(,.{1,20})(?:\\1|\\2|\\3)*$"
   Just routine = munch delimited
   munch [] = pure []
-  munch s = do (f,s') <- foldr1 (<|>) $
+  munch s = do (f,s') <- asum $
                          zipWith (\l f -> fmap (l,) (stripPrefix f s))
                            "ABC" functions
                (f :) <$> munch s'

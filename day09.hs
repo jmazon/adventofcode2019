@@ -1,11 +1,11 @@
 -- Day 9: Sensor Boost
 
-import IntCode
+import IntCode (getIntCode,runIntStream)
 
 main :: IO ()
 main = do
   prg <- getIntCode
-  let [boostSignal]       = evaluate prg [1]
-      [signalCoordinates] = evaluate prg [2]
+  let [boostSignal]       = runIntStream prg [1]
+      [signalCoordinates] = runIntStream prg [2]
   print boostSignal
   print signalCoordinates

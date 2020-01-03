@@ -1,13 +1,13 @@
 -- Day 7: Amplification Circuit
 
-import IntCode
+import IntCode (RAM,Transducer,getIntCode,runIntStream)
 
 import Data.List (permutations)
 import Data.Function (fix)
 
 -- An amplifier is a transducer, i.e. a stream to stream function.
 amplifier :: RAM -> Int -> Transducer
-amplifier prg phase is = evaluate prg (phase : is)
+amplifier prg phase = runIntStream prg . (phase :)
 
 -- A series of amplifiers is simply their functional composition.  Yay FP!
 series :: RAM -> [Int] -> Transducer
