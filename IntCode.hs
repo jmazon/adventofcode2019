@@ -22,13 +22,19 @@ module IntCode (
   , IntCodeF(..)
   , runIntF
   , runIntT
+
+  , runAscii
+  , runAscii'
   ) where
 
+import Data.Char (chr,ord)
+import Data.List (partition)
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector.Unboxed as V
 import Data.Vector.Unboxed (Vector,(!),(!?),(//))
 import Data.Vector.Unboxed.Deriving
 import Data.List.Split (linesBy)
+import Control.Arrow (first)
 import Control.Monad.RWS.Lazy
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Free
@@ -238,3 +244,11 @@ instance (Param p,Params ps) => Params (p :< ps) where
   readParams (m:ms) = do p <- readParam m =<< readInstr
                          ps <- readParams ms
                          return (p :< ps)
+
+-- Improved interfaces for some recurring themes
+
+runAscii :: RAM -> String -> String
+runAscii prg = map chr . runIntStream prg . map ord
+
+runAscii' :: RAM -> String -> (String,[Int])
+runAscii' prg = first (map chr) . partition (< 128) . runIntStream prg . map ord

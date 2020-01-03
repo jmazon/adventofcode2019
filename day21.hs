@@ -1,16 +1,14 @@
 -- Day 21: Springdroid Adventure
 
-import IntCode (getIntCode,runIntStream)
-import Data.Char (ord)
+import IntCode (getIntCode,runAscii')
 
 main :: IO ()
 main = do
   prg <- getIntCode
-  print $ last $ runIntStream prg (encode prg1)
-  print $ last $ runIntStream prg (encode prg2)
-
-encode :: String -> [Int]
-encode = map ord
+  let (_,[hullDamage1]) = runAscii' prg prg1
+      (_,[hullDamage2]) = runAscii' prg prg2
+  print hullDamage1
+  print hullDamage2
 
 prg1,prg2 :: String
 

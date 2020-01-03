@@ -1,14 +1,12 @@
 -- Day 17: Set and Forget
 {-# LANGUAGE DeriveFoldable,LambdaCase,TupleSections #-}
 
-import IntCode (getIntCode,poke,runIntStream)
+import IntCode (getIntCode,poke,runAscii,runAscii')
 
 import           Data.Array
-import           Data.Char     (chr,ord)
 import           Data.Foldable (asum)
 import           Data.List     (group,sort,intercalate,intersperse,stripPrefix)
 import           Data.Maybe    (catMaybes,mapMaybe)
-import qualified Data.Vector
 import           Text.Regex.PCRE
 
 data Order = Forward | TurnLeft | TurnRight deriving (Eq,Show)
@@ -32,8 +30,8 @@ findRobot pos = fmap (pos,) . \case '^' -> Just $ V (-1)  0
 
 main :: IO ()
 main = do
-  prg <- getIntCode
-  let view = filter (not . null) $ lines $ map chr $ runIntStream prg []
+  vacuumCamera <- getIntCode
+  let view = filter (not . null) $ lines $ runAscii vacuumCamera ""
       width = length (head view)
       height = length view
 
@@ -44,7 +42,9 @@ main = do
   print $ sum $ map product intersections
 
   let solution = factor orders ++ ["n"]
-  print $ last $ runIntStream (poke prg [(0,2)]) $ map ord $ unlines solution
+      vacuumControl = poke vacuumCamera [(0,2)]
+      (_,[dust]) = runAscii' vacuumControl (unlines solution)
+  print dust
 
 -- My initial intersection detection algorithm simply checked for
 -- plus-shaped patterns on the grid.  This works on AoC inputs, but
