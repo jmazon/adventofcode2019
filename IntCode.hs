@@ -1,14 +1,11 @@
--- TODO: eliminate MonadFail (make readParams take static vector)
-
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module IntCode (RAM,getIntCode,getIntCodeFromFile,evaluateOld,evaluate,evaluateF,evaluateT,IntCodeF(..),Value(..),Transducer) where
-
-import UnsafeError
 
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as V
@@ -16,7 +13,6 @@ import Data.Vector (Vector,(!),(!?),(//))
 import Data.List.Split (linesBy)
 import Control.Monad.RWS.Lazy
 import Control.Monad.State.Strict
-import Control.Monad.Fail
 import Control.Monad.Trans.Free
 import Control.Monad.Extra (whileM)
 import Data.Coerce
@@ -40,7 +36,7 @@ getIntCode = readIntCode <$> getContents
 
 evaluateOld :: RAM -> Int -> Int -> Int -- used by day 2
 evaluateOld prg i j = unVal . (! 0) $ ram $ fst $ execRWS
-  (unM $ runUnsafeErrorT $ runIntCodeInRW evaluateGeneric)
+  (unM $ runIntCodeInRW evaluateGeneric)
   (error "No input to evaluateOld")
   (S (prg // [(1,Val i),(2,Val j)]) 0 0)
 
@@ -53,7 +49,7 @@ type W = [Value]
 data S = S { ram :: !RAM
            , instructionPointer :: !Address, relativeBase :: !Address }
 
-evaluateGeneric :: (MonadFree IntCodeF m,MonadFail m,MonadState S m) => m ()
+evaluateGeneric :: (MonadFree IntCodeF m,MonadState S m) => m ()
 evaluateGeneric = whileM $ do
   Op {opCode,paramModes} <- decodeOp <$> readInstr
 
@@ -78,11 +74,10 @@ evaluateGeneric = whileM $ do
     x  -> error $ "Unknown opcode " ++ show (unOpCode x)
   pure (opCode /= 99)
 
-binOp :: (MonadFail m,MonadState S m) =>
-         [Mode] -> (Value -> Value -> Value) -> m ()
-binOp modes f = do
-  [Left op1,Left op2,Right out] <- readParams modes [In,In,Out]
-  out (op1 `f` op2)
+binOp :: MonadState S m => [Mode] -> (Value -> Value -> Value) -> m ()
+binOp modes op = do
+  PReadVal opLeft :< PReadVal opRight :< PStore store :< () <- readParams modes
+  store (opLeft `op` opRight)
 
 haltOp :: Applicative m => [Mode] -> m ()
 haltOp _ = pure ()
@@ -91,19 +86,15 @@ haltOp _ = pure ()
 
 evaluate :: RAM -> Transducer
 evaluate prg i = coerce $ snd $
-  evalRWS (unM $ runUnsafeErrorT $ runIntCodeInRW evaluateGeneric) (coerce i) (S prg 0 0)
+  evalRWS (unM $ runIntCodeInRW evaluateGeneric) (coerce i) (S prg 0 0)
 
-inOp :: (MonadFree IntCodeF m,MonadFail m,MonadState S m)
-     => [Mode] -> m ()
-inOp modes = do
-  [Right out] <- readParams modes [Out]
-  input >>= out
+inOp :: (MonadFree IntCodeF m,MonadState S m) => [Mode] -> m ()
+inOp modes = do PStore store :< () <- readParams modes
+                store =<< input
 
-outOp :: (MonadFree IntCodeF m,MonadFail m,MonadState S m)
-      => [Mode] -> m ()
-outOp modes = do
-  [Left op1] <- readParams modes [In]
-  output op1
+outOp :: (MonadFree IntCodeF m,MonadState S m) => [Mode] -> m ()
+outOp modes = do PReadVal operand :< () <- readParams modes
+                 output operand
 
 -- Also day 5: parameter modes
 
@@ -116,27 +107,23 @@ decodeOp (Val n) = Op (OpCode (n `mod` 100)) (map mode [0..2])
 
 data Mode = Position | Immediate | Relative deriving (Show,Enum)
 
-data Dir = In | Out
+class Param p where readParam :: MonadState S m => Mode -> Value -> m p
 
-readParams :: MonadState S m =>
-              [Mode] -> [Dir] -> m [Either Value (Value -> m ())]
-readParams modes dirs = zipWithM f modes dirs where
-  f m In  = fmap  Left  .  inParam m =<< readInstr
-  f m Out = fmap  Right . outParam m =<< readInstr
+newtype PReadVal = PReadVal Value
+instance Param PReadVal where
+  readParam m imm@(Val int) = fmap PReadVal $ case m of
+      Position  -> readAddr pos
+      Immediate -> pure imm
+      Relative  -> readRel  pos
+    where pos = Addr int
 
-inParam :: MonadState S m => Mode -> Value -> m Value
-inParam m imm@(Val int) = case m of
-    Position  -> readAddr pos
-    Immediate -> pure imm
-    Relative  -> readRel  pos
-  where pos = Addr int
-
-outParam :: MonadState S m => Mode -> Value -> m (Value -> m ())
-outParam m (Val int) = case m of
-    Position -> pure (writeAddr pos)
-    Relative ->       writeRel  pos
-    x -> error $ "Invalid output addressing mode " ++ show x
-  where pos = Addr int
+newtype PStore m = PStore ( Value -> m () )
+instance MonadState S m => Param (PStore m) where
+  readParam m (Val int) = fmap PStore $ case m of
+     Position -> pure (writeAddr pos)
+     Relative ->       writeRel  pos
+     x -> error $ "Invalid output addressing mode " ++ show x
+   where pos = Addr int
 
 -- Day 5 part 2: abstract position handling for branching operations
 
@@ -146,23 +133,22 @@ adjIP f = modify' $ \s -> s { instructionPointer = f (instructionPointer s) }
 readInstr :: MonadState S m => m Value
 readInstr = readAddr =<< gets instructionPointer <* adjIP (+1)
 
-condBranchOp :: (MonadFail m,MonadState S m) =>
-                [Mode] -> (Value -> Bool) -> m ()
-condBranchOp modes pr = do
-  [Left op1,Left (Val op2)] <- readParams modes [In,In]
-  when (pr op1) (adjIP (const (Addr op2)))
+condBranchOp :: MonadState S m => [Mode] -> (Value -> Bool) -> m ()
+condBranchOp modes predicate = do
+  PReadVal condition :< PReadVal (Val delta) :< () <- readParams modes
+  when (predicate condition) (adjIP (const (Addr delta)))
 
 -- Day 9: support for relative mode
 
 readRel :: MonadState S m => Address -> m Value
 readRel offset = readAddr . (+ offset) =<< gets relativeBase
 
-writeRel :: MonadState S m => Address -> m (Value -> m ())
+writeRel :: (MonadState S m,MonadState S m') => Address -> m (Value -> m' ())
 writeRel offset = writeAddr . (+ offset) <$> gets relativeBase
 
-relOp :: (MonadFail m,MonadState S m) => [Mode] -> m ()
+relOp :: MonadState S m => [Mode] -> m ()
 relOp modes = do
-  [Left (Val delta)] <- readParams modes [In]
+  PReadVal (Val delta) :< () <- readParams modes
   modify' $ \s -> s { relativeBase = relativeBase s + Addr delta }
 
 -- Also day 9: memory is now infinite in natural addresses.
@@ -205,7 +191,32 @@ runIntCodeInRW = iterT run where
   run (Output i f) = tell [i] >> f
 
 evaluateF :: RAM -> Free IntCodeF ()
-evaluateF prg = evaluateT prg
+evaluateF = evaluateT
 
 evaluateT :: Monad m => RAM -> FreeT IntCodeF m ()
-evaluateT prg = runUnsafeErrorT $ evalStateT (evaluateGeneric) (S prg 0 0)
+evaluateT prg = evalStateT evaluateGeneric (S prg 0 0)
+
+-- I had a generalized function to resolve operation parameters:
+-- readParams :: [Mode] -> [Dir] -> m [Either Value (Value -> m ())]
+-- It gracefully handled all number of operands from 0 (well, unused,
+-- but it would have worked) to 4 or more.  At the cost of a
+-- [thats] <- readParams (...) [thises] pattern match in a do.  Which
+-- resulted in my monad requiring a MonadFail constraint, a big wart
+-- overall.
+--
+-- All the more of a wart that I'll actually need MonadFail to report
+-- real failures: invalid input IntCode.  So I'm replacing my failable
+-- pattern matches with a typesafe heterogeneous list of parameters
+-- and eliminating *those* (which is currently: all) MonadFail
+-- instances.
+
+data a :< b = a :< b
+infixr 5 :<
+
+class Params ps where readParams :: MonadState S m => [Mode] -> m ps
+instance Params () where readParams _ = return ()
+instance (Param p,Params ps) => Params (p :< ps) where
+  readParams   []   = error "Internal error: Ran out of modes"
+  readParams (m:ms) = do p <- readParam m =<< readInstr
+                         ps <- readParams ms
+                         return (p :< ps)
