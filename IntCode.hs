@@ -7,6 +7,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module IntCode (
     RAM
@@ -249,21 +250,27 @@ instance (Param p,Params ps) => Params (p :< ps) where
 
 -- Improved interfaces for some recurring themes
 
-runAgent :: RAM -> (s -> (Bool,Bool -> Bool -> s)) -> (s -> r) -> s -> r
+class AgentCallback s cb where
+  consume :: (Free IntCodeF () -> s -> r) -> Free IntCodeF () -> cb -> r
+
+instance AgentCallback s s where consume = id
+
+instance (Enum e,AgentCallback s cb) => AgentCallback s (e -> cb) where
+  consume cont f agentCont = case runFree f of
+    Free (Output outputVal icCont) ->
+      consume cont icCont (agentCont (toEnum outputVal))
+    Free Input {} -> error "runAgent: out-of-phase input"
+    Pure _ -> error "runAgent: premature termination"
+
+runAgent :: (Enum i,AgentCallback s cb)
+         => RAM -> (s -> (i,cb)) -> (s -> r) -> s -> r
 runAgent prg agent result = inputPhase (runIntF prg) where
   inputPhase f s = case runFree f of
     Pure () -> result s
-    Free (Input icCont) -> let (inputVal,agentCont) = agent s
-                           in outputPhase (icCont (fromEnum inputVal)) agentCont
+    Free (Input icCont) ->
+      let (inputVal,callback) = agent s
+      in consume inputPhase (icCont (fromEnum inputVal)) callback
     Free Output {} -> error "runAgent: out-of-phase output"
-  outputPhase f agentCont = case runFree f of
-    Free (Output outputVal icCont) -> outputPhase2 icCont (agentCont (toEnum outputVal))
-    Free Input {} -> error "runAgent: out-of-phase input"
-    Pure _ -> error "runAgent: premature termination"
-  outputPhase2 f agentCont = case runFree f of
-    Free (Output outputVal icCont) -> inputPhase icCont (agentCont (toEnum outputVal))
-    Free Input {} -> error "runAgent: out-of-phase input"
-    Pure _ -> error "runAgent: premature termination"
 
 runEnum :: (Enum i,Enum o) => RAM -> [i] -> [o]
 runEnum prg = map toEnum . runIntStream prg . map fromEnum
