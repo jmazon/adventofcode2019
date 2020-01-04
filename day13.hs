@@ -1,71 +1,85 @@
 -- Day 13: Care Package
-{-# LANGUAGE LambdaCase,DeriveAnyClass #-}
+{-# LANGUAGE LambdaCase,DeriveAnyClass,FlexibleContexts #-}
 
-import IntCode (getIntCode,getIntCodeFromFile,poke,runIntStream)
+import IntCode (RAM,getIntCode,getIntCodeFromFile,poke,runIntStream,IntCodeF(..),runIntT)
 
 import Control.Concurrent
-import Control.Exception  (Exception,bracket,handle,throwIO)
-import Control.Monad      (forM_,forever,void)
+import Control.Exception         (Exception,bracket,handle,throwIO)
+import Control.Monad             (forM_,forever,void)
+import Control.Monad.Trans.Maybe (runMaybeT)
+import Control.Monad.Trans.Free  (FreeF(Pure,Free),runFreeT)
+import Control.Monad.State.Lazy  (lift,evalState,get,modify')
 import Data.Array.IO
-import Data.Either        (lefts,rights)
+import Data.Either               (lefts,rights)
 import Data.IORef
-import Data.List          (unfoldr)
-import Data.List.Split    (chunksOf)
-import System.Environment (getArgs)
-import System.Exit        (exitFailure)
-import System.IO          (hPutStrLn,stderr)
-import Graphics.Vty hiding (Output)
+import Data.Maybe                (fromMaybe)
+import Data.List.Split           (chunksOf)
+import System.Environment        (getArgs)
+import System.Exit               (exitFailure)
+import System.IO                 (hPutStrLn,stderr)
+import Graphics.Vty hiding (Input,Output)
 
 type Pos = (Int,Int)
 data Tile = Empty | Wall | Block | Paddle | Ball deriving (Eq,Enum)
 type TileOutput = (Pos,Tile)
 newtype ScoreOutput = ScoreOutput { getScore :: Int }
-type Output = Either TileOutput ScoreOutput
+type ArcadeOutput = Either TileOutput ScoreOutput
 data JoystickTilt = TiltLeft | TiltNeutral | TiltRight deriving Enum
-
-tiltFromInt :: Int -> JoystickTilt
-tiltFromInt = flip (.) (`compare` 0) $ \case LT -> TiltLeft
-                                             EQ -> TiltNeutral
-                                             GT -> TiltRight
+type Strategy = RAM -> [ArcadeOutput]
 
 tiltToInt :: JoystickTilt -> Int
 tiltToInt = subtract 1 . fromEnum
 
-parseOutputs :: [Int] -> [Output]
+parseOutputs :: [Int] -> [ArcadeOutput]
 parseOutputs = map readTile . chunksOf 3
-  where readTile [-1,0,s] = Right (ScoreOutput s)
-        readTile [ x,y,t] = Left ((y,x),toEnum t)
-        readTile wtf = error $ "Error: got this “tile”: " ++ show wtf
 
--- The follow strategy: remember where the paddle is; send a direction
--- event every time we see the ball.  This happens to work except for
--- the very first time the screen is displayed; hence the reverse
--- operation there to spare a *lot* of logic here.
-follow :: [Output] -> [JoystickTilt]
-follow s = unfoldr f (undefined,s) where
-  f (px,Left ((_,bx),  Ball):stream) = Just (move px bx,(px,stream))
-  f (_ ,Left ((_,px),Paddle):stream) =                f (px,stream)
-  f (px,     _              :stream) =                f (px,stream)
-  f (_ ,                   []      ) = Nothing
-  move px bx = tiltFromInt (bx - px)
+readTile :: [Int] -> ArcadeOutput
+readTile [-1,0,s] = Right (ScoreOutput s)
+readTile [ x,y,t] = Left ((y,x),toEnum t)
+readTile wtf = error $ "Error: got this “tile”: " ++ show wtf
+
+data FollowerState = FS { ballPos :: Pos, paddlePos :: Pos }
+
+follower :: Strategy
+follower game = evalState (agent (runIntT game)) state0 where
+  state0 = FS (comeon "ball") (comeon "paddle")
+  comeon item = error $ "IntCode read joystick before even displaying a " ++ item
+                        ++ " — gimme a break!"
+  agent f = runFreeT f >>= \case
+    Pure () -> return []
+    Free (Input cont) -> do
+      FS {ballPos = (_,bx), paddlePos = (_,px)} <- get
+      agent (cont (signum (bx - px)))
+    Free (Output x cont) -> bailWith "Unconforming IntCode" $ do
+      Free (Output y cont')       <- lift (runFreeT cont )
+      Free (Output tileId cont'') <- lift (runFreeT cont')
+      let ao = readTile [x,y,tileId]
+      case ao of Left (pos,Paddle) -> modify' $ \as -> as {paddlePos = pos}
+                 Left (pos,Ball)   -> modify' $ \as -> as {ballPos   = pos}
+                 _                 -> pure ()
+      fmap (ao :) $ lift $ agent cont''
+  bailWith msg = fmap (fromMaybe (error msg)) . runMaybeT
+
+fromStream :: [JoystickTilt] -> Strategy
+fromStream inputs = parseOutputs . flip runIntStream (map tiltToInt inputs)
 
 main :: IO ()
 main = do
   args <- getArgs
-  (get,ui,strategy,chan) <- case args of
-    [] -> pure (getIntCode,False,follow,Nothing)
+  (getGame,ui,strategy,chan) <- case args of
+    [] -> pure (getIntCode,False,follower,Nothing)
     ["--visual",fileName] ->
-      pure (getIntCodeFromFile fileName,True,follow,Nothing)
+      pure (getIntCodeFromFile fileName,True,follower,Nothing)
     ["--interactive",fileName] -> do
-      c <- newChan
+      c <- newChan :: IO (Chan JoystickTilt)
       inputs <- getChanContents c
-      pure (getIntCodeFromFile fileName,True,const inputs,Just c)
+      pure (getIntCodeFromFile fileName,True,fromStream inputs,Just c)
     _ -> do
       hPutStrLn stderr "Usage: {prg} < input"
       hPutStrLn stderr "       {prg} {--visual|--interactive} input"
       exitFailure
 
-  game <- get
+  game <- getGame
   let display0 = lefts $ parseOutputs $ runIntStream game []
       initialBlockCount = length $ filter ((== Block) . snd) display0
       blockReport = "Block tiles on initial screen: " ++ show initialBlockCount
@@ -73,19 +87,14 @@ main = do
   let height = 1 + maximum (map (fst . fst) display0)
       width  = 1 + maximum (map (snd . fst) display0)
       gameForFree = poke game [(0,2)]
-
-  let (initialDisplay,updateStream) = splitAt (width * height) $
-                                      parseOutputs $
-                                      runIntStream gameForFree $
-                                      map tiltToInt controlStream
-      controlStream = strategy (reverse initialDisplay ++ updateStream)
+      updateStream = strategy gameForFree
 
   case ui of
     False -> do print initialBlockCount
                 print $ getScore $ last $ rights updateStream
 
     True -> bracket (mkVty =<< standardIOConfig) shutdown $
-            vtyUi blockReport width height initialDisplay updateStream chan
+            vtyUi blockReport width height updateStream chan
 
 attr :: Attr
 attr = defAttr `withBackColor` brightWhite `withForeColor` black
@@ -101,11 +110,10 @@ drawTile (y,x) Block  = char (attr `withForeColor` c) b
 
 data Quit = Quit deriving (Show,Exception)
 
-vtyUi :: String -> Int -> Int
-      -> [Output] -> [Output]
+vtyUi :: String -> Int -> Int -> [ArcadeOutput]
       -> Maybe (Chan JoystickTilt) -> Vty
       -> IO ()
-vtyUi blockReport width height initialDisplay updateStream chan vty = do
+vtyUi blockReport width height updateStream chan vty = do
   let infoImg = string (attr `withStyle` italic) blockReport
       instructionsImg = string attr "Use ← arrow keys → to move paddle" <->
                         string attr "      down↓arrow stays in place" <->
@@ -115,9 +123,7 @@ vtyUi blockReport width height initialDisplay updateStream chan vty = do
                        (const instructionsImg) chan
       rightPane = instrImg <-> pad 0 2 0 2 infoImg
 
-  raster <- newListArray ((0,0),(height-1,width-1))
-                         (map snd (lefts initialDisplay))
-            :: IO (IOArray Pos Tile)
+  raster <- newArray ((0,0),(height-1,width-1)) Empty :: IO (IOArray Pos Tile)
   score <- newIORef 0
 
   handle (\Quit -> pure ()) $ do
