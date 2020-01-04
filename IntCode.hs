@@ -23,6 +23,7 @@ module IntCode (
   , runIntF
   , runIntT
 
+  , runAgent
   , runEnum
   , runAscii
   , runAscii'
@@ -247,6 +248,22 @@ instance (Param p,Params ps) => Params (p :< ps) where
                          return (p :< ps)
 
 -- Improved interfaces for some recurring themes
+
+runAgent :: RAM -> (s -> (Bool,Bool -> Bool -> s)) -> (s -> r) -> s -> r
+runAgent prg agent result = inputPhase (runIntF prg) where
+  inputPhase f s = case runFree f of
+    Pure () -> result s
+    Free (Input icCont) -> let (inputVal,agentCont) = agent s
+                           in outputPhase (icCont (fromEnum inputVal)) agentCont
+    Free Output {} -> error "runAgent: out-of-phase output"
+  outputPhase f agentCont = case runFree f of
+    Free (Output outputVal icCont) -> outputPhase2 icCont (agentCont (toEnum outputVal))
+    Free Input {} -> error "runAgent: out-of-phase input"
+    Pure _ -> error "runAgent: premature termination"
+  outputPhase2 f agentCont = case runFree f of
+    Free (Output outputVal icCont) -> inputPhase icCont (agentCont (toEnum outputVal))
+    Free Input {} -> error "runAgent: out-of-phase input"
+    Pure _ -> error "runAgent: premature termination"
 
 runEnum :: (Enum i,Enum o) => RAM -> [i] -> [o]
 runEnum prg = map toEnum . runIntStream prg . map fromEnum
