@@ -263,14 +263,15 @@ instance (Enum e,AgentCallback s cb) => AgentCallback s (e -> cb) where
     Pure _ -> error "runAgent: premature termination"
 
 runAgent :: (Enum i,AgentCallback s cb)
-         => RAM -> (s -> (i,cb)) -> (s -> r) -> s -> r
+         => RAM -> (s -> Maybe (i,cb)) -> (s -> r) -> s -> r
 runAgent prg agent result = inputPhase (runIntF prg) where
-  inputPhase f s = case runFree f of
-    Pure () -> result s
-    Free (Input icCont) ->
-      let (inputVal,callback) = agent s
-      in consume inputPhase (icCont (fromEnum inputVal)) callback
-    Free Output {} -> error "runAgent: out-of-phase output"
+  inputPhase f s = case agent s of
+    Nothing -> result s -- agent-triggered end
+    Just (inputVal,callback) -> case runFree f of
+      Pure () -> result s -- IC-triggered end
+      Free (Input icCont) ->
+        consume inputPhase (icCont (fromEnum inputVal)) callback
+      Free Output {} -> error "runAgent: out-of-phase output"
 
 runEnum :: (Enum i,Enum o) => RAM -> [i] -> [o]
 runEnum prg = map toEnum . runIntStream prg . map fromEnum

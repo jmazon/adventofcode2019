@@ -24,7 +24,7 @@ data AgentState = AS { knownHull :: !(Map V2 Bool), pos :: !V2, dir :: !V2 }
 
 paintHull :: RAM -> Bool -> Map V2 Bool
 paintHull prg startColor =
-  runAgent prg agent knownHull (AS (singleton 0 startColor) 0 i)
+  runAgent prg (Just . agent) knownHull (AS (singleton 0 startColor) 0 i)
   where agent AS {..} = ( findWithDefault False pos knownHull
                         , \color turn ->
                           let dir' = dir * if turn then (-i) else i
