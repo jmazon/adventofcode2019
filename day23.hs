@@ -1,7 +1,7 @@
 -- Day 23: Category Six
 {-# LANGUAGE FlexibleContexts,RecursiveDo,LambdaCase #-}
 
-import IntCode (IntCodeF(..),getIntCode,runIntF)
+import IntCode (getIntCode,runIntF,IntCodeM,GenCodeF(..))
 
 import Data.IntMap.Strict (fromList,(!))
 import Data.Bits          (bit,setBit,clearBit)
@@ -34,7 +34,7 @@ type NetKit = (SendAction,TVar Int,TQueue Int)
 --
 -- State: temporary storage for the address and X value until we get a
 -- complete packet to send.
-runNIC :: NetKit -> Free IntCodeF () -> Int -> IO ()
+runNIC :: NetKit -> IntCodeM () -> Int -> IO ()
 runNIC (sendTo,sem,chan) f self = runReaderT (evalStateT (iterM go f) []) False
   where go (Input cont) = do
           idle <- ask

@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -8,6 +9,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module IntCode (
     RAM
@@ -20,7 +22,12 @@ module IntCode (
   , Transducer
   , runIntStream
 
-  , IntCodeF(..)
+  , IntCodeF, GenCodeF(..)
+  , IntCodeM, GenCodeM
+  , decode
+  , CoIntCodeF, CoGenCodeF(..)
+  , CoIntCodeW, CoGenCodeW
+  , playF, coreflex
   , runIntF
   , runIntT
 
@@ -37,18 +44,20 @@ import qualified Data.Vector.Unboxed as V
 import Data.Vector.Unboxed (Vector,(!),(!?),(//))
 import Data.Vector.Unboxed.Deriving
 import Data.List.Split (linesBy)
-import Control.Arrow (first)
+import Control.Arrow (first,(***))
 import Control.Monad.RWS.Lazy
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Free
 import Control.Monad.Extra (whileM)
+import Control.Monad.Identity
+import Control.Comonad.Cofree
 import Data.Coerce
 
 newtype Address = Addr Int deriving (Eq,Ord,Num)
 newtype Value = Val Int deriving (Eq,Ord,Num)
 newtype RAM = RAM (Vector Value)
 
-derivingUnbox "Value" [t| Value -> Int |] [| \(Val v) -> v |] [| Val |]
+derivingUnbox "Value" [t| Value -> Int |] [| coerce |] [| coerce |]
 
 -- Day 2: the initial IntCode machine
 
@@ -101,7 +110,7 @@ runGeneric = whileM $ do
 
 binOp :: MonadState S m => [Mode] -> (Value -> Value -> Value) -> m ()
 binOp modes op = do
-  PReadVal opLeft :< PReadVal opRight :< PStore store :< () <- readParams modes
+  PReadVal opLeft :+ PReadVal opRight :+ PStore store :+ () <- readParams modes
   store (opLeft `op` opRight)
 
 haltOp :: Applicative m => [Mode] -> m ()
@@ -116,11 +125,11 @@ runIntStream prg i = coerce $ snd $
   evalRWS (runIntCodeInRW runGeneric) (coerce i) (S prg 0 0)
 
 inOp :: (MonadFree IntCodeF m,MonadState S m) => [Mode] -> m ()
-inOp modes = do PStore store :< () <- readParams modes
+inOp modes = do PStore store :+ () <- readParams modes
                 store . Val =<< input
 
 outOp :: (MonadFree IntCodeF m,MonadState S m) => [Mode] -> m ()
-outOp modes = do PReadVal (Val operand) :< () <- readParams modes
+outOp modes = do PReadVal (Val operand) :+ () <- readParams modes
                  output operand
 
 -- Also day 5: parameter modes
@@ -162,7 +171,7 @@ readInstr = readAddr =<< gets instructionPointer <* adjIP (+1)
 
 condBranchOp :: MonadState S m => [Mode] -> (Value -> Bool) -> m ()
 condBranchOp modes predicate = do
-  PReadVal condition :< PReadVal (Val delta) :< () <- readParams modes
+  PReadVal condition :+ PReadVal (Val delta) :+ () <- readParams modes
   when (predicate condition) (adjIP (const (Addr delta)))
 
 -- Day 9: support for relative mode
@@ -175,7 +184,7 @@ writeRel offset = writeAddr . (+ offset) <$> gets relativeBase
 
 relOp :: MonadState S m => [Mode] -> m ()
 relOp modes = do
-  PReadVal (Val delta) :< () <- readParams modes
+  PReadVal (Val delta) :+ () <- readParams modes
   modify' $ \s -> s { relativeBase = relativeBase s + Addr delta }
 
 -- Also day 9: memory is now infinite in natural addresses.
@@ -203,12 +212,13 @@ writeAddr (Addr t) n = do
 -- perfect for e.g. day 5.  Just implement in terms of the free monad
 -- one instead.
 
-data IntCodeF a = Input (Int -> a) | Output Int a deriving Functor
+type IntCodeF = GenCodeF Int Int
+type IntCodeM a = GenCodeM Int Int a
 
-input :: MonadFree IntCodeF m => m Int
+input :: MonadFree (GenCodeF i o) m => m i
 input = wrap (Input pure)
 
-output :: MonadFree IntCodeF m => Int -> m ()
+output :: MonadFree (GenCodeF i o) m => o -> m ()
 output v = wrap (Output v (return ()))
 
 runIntCodeInRW :: (MonadReader [Value] m,MonadWriter [Value] m)
@@ -217,7 +227,7 @@ runIntCodeInRW = iterT run where
   run (Input f) = asks head >>= \(Val v) -> local tail (f v)
   run (Output i f) = tell [Val i] >> f
 
-runIntF :: RAM -> Free IntCodeF ()
+runIntF :: RAM -> IntCodeM ()
 runIntF = runIntT
 
 runIntT :: Monad m => RAM -> FreeT IntCodeF m ()
@@ -237,21 +247,21 @@ runIntT prg = evalStateT runGeneric (S prg 0 0)
 -- and eliminating *those* (which is currently: all) MonadFail
 -- instances.
 
-data a :< b = a :< b
-infixr 5 :<
+data a :+ b = a :+ b
+infixr 5 :+
 
 class Params ps where readParams :: MonadState S m => [Mode] -> m ps
 instance Params () where readParams _ = return ()
-instance (Param p,Params ps) => Params (p :< ps) where
+instance (Param p,Params ps) => Params (p :+ ps) where
   readParams   []   = error "Internal error: Ran out of modes"
   readParams (m:ms) = do p <- readParam m =<< readInstr
                          ps <- readParams ms
-                         return (p :< ps)
+                         return (p :+ ps)
 
 -- Improved interfaces for some recurring themes
 
 class AgentCallback s cb where
-  consume :: (Free IntCodeF () -> s -> r) -> Free IntCodeF () -> cb -> r
+  consume :: (IntCodeM () -> s -> r) -> IntCodeM () -> cb -> r
 
 instance AgentCallback s s where consume = id
 
@@ -281,3 +291,49 @@ runAscii = runEnum
 
 runAscii' :: RAM -> String -> (String,[Int])
 runAscii' prg = first (map chr) . partition (< 128) . runIntStream prg . map ord
+
+data GenCodeF i o a = Input (i -> a) | Output o a deriving Functor
+type GenCodeM i o a = Free (GenCodeF i o) a
+
+class Parser i a cb where
+  parser :: Parser i a cb0 => cb0 -> cb -> IntCodeM () -> GenCodeM i a ()
+instance Parser i a a where
+  parser cb0 a m = output a >> parser cb0 cb0 m
+instance (Enum e,Enum i,Parser i a cb) => Parser i a (e -> cb) where
+  parser cb0 cb m = case runFree m of
+    Pure () -> pure ()
+    Free (Input c) -> parser cb0 cb . c . fromEnum =<< input
+    Free (Output v c) -> parser cb0 (cb (toEnum v)) c
+
+decode :: Parser i a cb => cb -> IntCodeM () -> GenCodeM i a ()
+decode cb0 = parser cb0 cb0
+
+data CoGenCodeF i o a = CoGenCodeF { ifInput :: (i,a), ifOutput :: o -> a }
+  deriving Functor
+type CoIntCodeF a = CoGenCodeF Int Int a
+
+type CoGenCodeW i o = Cofree (CoGenCodeF i o)
+type CoIntCodeW a = CoGenCodeW Int Int a
+
+playF :: Free (GenCodeF i o) () -> Cofree (CoGenCodeF i o) y -> y
+playF m w = runIdentity $ playFM m (toId w) where
+  -- easier to reimplement by hand than to play typeclass
+  -- parameter magic to derive Bifunctor on CoGenCodeF
+  toId (v :< CoGenCodeF i o) = v :< CoGenCodeF ((Identity *** toId) i) (toId . o)
+
+playFM :: Monad m => Free (GenCodeF i o) () -> Cofree (CoGenCodeF (m i) o) y -> m y
+playFM f (v :< CoGenCodeF {..}) = case runFree f of
+  Pure () -> return v
+  Free (Input c) -> do let (m,v') = ifInput
+                       i <- m
+                       playFM (c i) v'
+  Free (Output i c) -> playFM c (ifOutput i)
+
+coreflex :: (s -> Maybe (Int,o -> s)) -> s -> CoGenCodeW (Maybe Int) o (Either (o -> s) s)
+coreflex agent s0 = coiter f (Right s0) where
+  f (Right s) = case agent s of
+    Just (i,c) -> CoGenCodeF (Just i,Left c) (unexp "OUT" "IN")
+    Nothing -> CoGenCodeF (Nothing,noop "IN") (noop "OUT")
+  f (Left c) = CoGenCodeF (unexp "IN" "OUT") (Right . c)
+  unexp got expt = error $ "Expected " ++ expt ++ " operation, got " ++ got
+  noop got = error $ "Internal error: not expecting *any* operation, got " ++ got

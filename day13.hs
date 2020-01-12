@@ -1,7 +1,7 @@
 -- Day 13: Care Package
 {-# LANGUAGE LambdaCase,DeriveAnyClass,FlexibleContexts #-}
 
-import IntCode (RAM,getIntCode,getIntCodeFromFile,poke,runIntStream,IntCodeF(..),runIntT)
+import IntCode (RAM,getIntCode,getIntCodeFromFile,poke,runIntStream,GenCodeF(..),runIntT)
 
 import Control.Concurrent
 import Control.Exception         (Exception,bracket,handle,throwIO)
