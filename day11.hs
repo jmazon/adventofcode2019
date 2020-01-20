@@ -1,12 +1,13 @@
 -- Day 11: Space Police
 {-# LANGUAGE RecordWildCards #-}
 
-import IntCode (RAM,getIntCode,runAgent)
+import IntCode (RAM,CoGenCodeF(..),getIntCode,runIntF,decode,playReflexF)
 
 import Data.Function ((&))
 import Data.Map.Strict hiding (map)
 import Control.Arrow ((***),(&&&))
 import Control.Monad (forM_,join)
+import Control.Comonad.Cofree (coiter)
 
 data V2 = V { x :: !Int, y :: !Int } deriving (Eq,Ord)
 instance Num V2 where
@@ -21,14 +22,15 @@ i :: V2
 i = V 0 1
 
 data AgentState = AS { knownHull :: !(Map V2 Bool), pos :: !V2, dir :: !V2 }
+data AgentOutput = AO { color :: Bool, turn :: Bool }
 
 paintHull :: RAM -> Bool -> Map V2 Bool
-paintHull prg startColor =
-  runAgent prg (Just . agent) knownHull (AS (singleton 0 startColor) 0 i)
-  where agent AS {..} = ( findWithDefault False pos knownHull
-                        , \color turn ->
-                          let dir' = dir * if turn then (-i) else i
-                          in AS (insert pos color knownHull) (pos+dir') dir' )
+paintHull prg startColor = knownHull $ playReflexF (decode AO (runIntF prg))
+                                                   (coiter react as0)
+  where as0 = AS (singleton 0 startColor) 0 i
+        react as@AS{..} = CoGenCodeF (findWithDefault False pos knownHull,as) $
+          \AO{..} -> let dir' = dir * if turn then (-i) else i
+                     in AS (insert pos color knownHull) (pos+dir') dir'
 
 main :: IO ()
 main = do

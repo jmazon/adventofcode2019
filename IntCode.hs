@@ -7,7 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -27,11 +27,10 @@ module IntCode (
   , decode
   , CoIntCodeF, CoGenCodeF(..)
   , CoIntCodeW, CoGenCodeW
-  , playF, coreflex
+  , playReflexF, playReflexFM, playCoreflex
   , runIntF
   , runIntT
 
-  , runAgent
   , runEnum
   , runAscii
   , runAscii'
@@ -40,13 +39,15 @@ module IntCode (
 import Data.Char (chr,ord)
 import Data.List (partition)
 import Data.Maybe (fromMaybe)
+import Data.Either (fromLeft)
 import qualified Data.Vector.Unboxed as V
 import Data.Vector.Unboxed (Vector,(!),(!?),(//))
 import Data.Vector.Unboxed.Deriving
 import Data.List.Split (linesBy)
-import Control.Arrow (first,(***))
+import Control.Arrow (first)
 import Control.Monad.RWS.Lazy
 import Control.Monad.State.Strict
+import Control.Monad.Except
 import Control.Monad.Trans.Free
 import Control.Monad.Extra (whileM)
 import Control.Monad.Identity
@@ -260,29 +261,6 @@ instance (Param p,Params ps) => Params (p :+ ps) where
 
 -- Improved interfaces for some recurring themes
 
-class AgentCallback s cb where
-  consume :: (IntCodeM () -> s -> r) -> IntCodeM () -> cb -> r
-
-instance AgentCallback s s where consume = id
-
-instance (Enum e,AgentCallback s cb) => AgentCallback s (e -> cb) where
-  consume cont f agentCont = case runFree f of
-    Free (Output outputVal icCont) ->
-      consume cont icCont (agentCont (toEnum outputVal))
-    Free Input {} -> error "runAgent: out-of-phase input"
-    Pure _ -> error "runAgent: premature termination"
-
-runAgent :: (Enum i,AgentCallback s cb)
-         => RAM -> (s -> Maybe (i,cb)) -> (s -> r) -> s -> r
-runAgent prg agent result = inputPhase (runIntF prg) where
-  inputPhase f s = case agent s of
-    Nothing -> result s -- agent-triggered end
-    Just (inputVal,callback) -> case runFree f of
-      Pure () -> result s -- IC-triggered end
-      Free (Input icCont) ->
-        consume inputPhase (icCont (fromEnum inputVal)) callback
-      Free Output {} -> error "runAgent: out-of-phase output"
-
 runEnum :: (Enum i,Enum o) => RAM -> [i] -> [o]
 runEnum prg = map toEnum . runIntStream prg . map fromEnum
 
@@ -315,25 +293,24 @@ type CoIntCodeF a = CoGenCodeF Int Int a
 type CoGenCodeW i o = Cofree (CoGenCodeF i o)
 type CoIntCodeW a = CoGenCodeW Int Int a
 
-playF :: Free (GenCodeF i o) () -> Cofree (CoGenCodeF i o) y -> y
-playF m w = runIdentity $ playFM m (toId w) where
-  -- easier to reimplement by hand than to play typeclass
-  -- parameter magic to derive Bifunctor on CoGenCodeF
-  toId (v :< CoGenCodeF i o) = v :< CoGenCodeF ((Identity *** toId) i) (toId . o)
+playReflexF :: Free (GenCodeF i o) () -> CoGenCodeW i o a -> a
+playReflexF m = runIdentity . playReflexFM m . fmap Identity
 
-playFM :: Monad m => Free (GenCodeF i o) () -> Cofree (CoGenCodeF (m i) o) y -> m y
-playFM f (v :< CoGenCodeF {..}) = case runFree f of
-  Pure () -> return v
-  Free (Input c) -> do let (m,v') = ifInput
-                       i <- m
-                       playFM (c i) v'
-  Free (Output i c) -> playFM c (ifOutput i)
+playReflexFM :: Monad m => Free (GenCodeF i o) x -> CoGenCodeW i o (m a) -> m a
+playReflexFM m (a :< co) = do
+  v <- a
+  let CoGenCodeF {..} = co
+  case runFree m of
+    Pure _ -> pure v
+    Free (Input c) -> let (i,w') = ifInput in playReflexFM (c i) w'
+    Free (Output i c) -> playReflexFM c (ifOutput i)
 
-coreflex :: (s -> Maybe (Int,o -> s)) -> s -> CoGenCodeW (Maybe Int) o (Either (o -> s) s)
-coreflex agent s0 = coiter f (Right s0) where
-  f (Right s) = case agent s of
-    Just (i,c) -> CoGenCodeF (Just i,Left c) (unexp "OUT" "IN")
-    Nothing -> CoGenCodeF (Nothing,noop "IN") (noop "OUT")
-  f (Left c) = CoGenCodeF (unexp "IN" "OUT") (Right . c)
-  unexp got expt = error $ "Expected " ++ expt ++ " operation, got " ++ got
-  noop got = error $ "Internal error: not expecting *any* operation, got " ++ got
+playCoreflex :: GenCodeM i o a -> (s -> Maybe (i,o -> s)) -> s -> s
+playCoreflex prg cb s0 = fromLeft (error "IntCode unexpectedly terminated") $
+                         runExcept $ playReflexFM prg (unfold f (Right s0))
+  where
+    f (Right s) = case cb s of
+      Just (i,c) -> (pure (),CoGenCodeF (i,Left c) (unexp "OUT" "IN"))
+      Nothing -> (throwError s,undefined)
+    f (Left c) = (pure (),CoGenCodeF (unexp "IN" "OUT") (Right . c))
+    unexp got expt = error $ "Expected " ++ expt ++ " operation, got " ++ got

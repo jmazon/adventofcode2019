@@ -1,7 +1,7 @@
 -- Day 15: Oxygen System
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NamedFieldPuns,TypeApplications #-}
 
-import IntCode (RAM,getIntCode,runAgent)
+import IntCode (RAM,getIntCode,runIntF,playCoreflex,decode)
 
 import           Data.Map.Strict (Map,(!),empty,insert,insertWith)
 import qualified Data.Set as S
@@ -26,38 +26,39 @@ commandFromDelta (i0,j0) (i,j) = case (i-i0,j-j0) of
 data AgentState = AS { pos :: !Pos, chart :: !Chart }
 
 runRepairDroid :: RAM -> Pos -> Chart
-runRepairDroid prg startPos = runAgent prg agent chart state0 where
+runRepairDroid prg startPos =
+    chart $ playCoreflex (decode (toEnum @Status) (runIntF prg)) agent state0
+  where
+    -- Exploration strategy: move toward nearest unknown position
+    agent :: AgentState -> Maybe (Command,Status -> AgentState)
+    agent AS {pos,chart} =
+      case bfs chart pos Unknown of -- Search for unknowns
+        [] -> Nothing     -- None?  We're done here.
+        (path@(_:_):_) -> -- Found nearest one.  Make the first step.
+          let step = last path in
+          Just ( commandFromDelta pos step
+               , \status -> let pos' = case status of
+                                  Wall    -> pos
+                                  Unknown -> error "WTF"
+                                  _       -> step
+                            in AS pos' (updateChart chart step status) )
+        ([]:_) -> error "Internal error: not supposed to stand on Unknown"
 
-  -- Exploration strategy: move toward nearest unknown position
-  agent :: AgentState -> Maybe (Command,Status -> AgentState)
-  agent AS {pos,chart} =
-    case bfs chart pos Unknown of -- Search for unknowns
-      [] -> Nothing     -- None?  We're done here.
-      (path@(_:_):_) -> -- Found nearest one.  Make the first step.
-        let step = last path in
-        Just ( commandFromDelta pos step
-             , \status -> let pos' = case status of
-                                Wall    -> pos
-                                Unknown -> error "WTF"
-                                _       -> step
-                          in AS pos' (updateChart chart step status) )
-      ([]:_) -> error "Internal error: not supposed to stand on Unknown"
+    -- When updating the chart, the position reported by the droid is
+    -- overwritten (it's supposed to have been an Unknown); if it was
+    -- some kind of open, all its neighbors are new potential places to
+    -- explore, so mark them as Unknown.  But don't overwrite!
+    updateChart :: Chart -> Pos -> Status -> Chart
+    updateChart chart pos status | status == Wall = chart'
+                                 | otherwise      = chart''
+      where chart' = insert pos status chart
+            chart'' = foldl' (\c n -> insertWith (flip const) n Unknown c)
+                             chart' (neighbors pos)
 
-  -- When updating the chart, the position reported by the droid is
-  -- overwritten (it's supposed to have been an Unknown); if it was
-  -- some kind of open, all its neighbors are new potential places to
-  -- explore, so mark them as Unknown.  But don't overwrite!
-  updateChart :: Chart -> Pos -> Status -> Chart
-  updateChart chart pos status | status == Wall = chart'
-                               | otherwise      = chart''
-    where chart' = insert pos status chart
-          chart'' = foldl' (\c n -> insertWith (flip const) n Unknown c)
-                           chart' (neighbors pos)
-
-  -- Seed initial chart with the starting position being Open (it's
-  -- not explicit in the statement, but it is undoubtedly assumed by
-  -- the example.  It also happens to match my input.
-  state0 = AS startPos (updateChart empty startPos Open)
+    -- Seed initial chart with the starting position being Open (it's
+    -- not explicit in the statement, but it is undoubtedly assumed by
+    -- the example.  It also happens to match my input.
+    state0 = AS startPos (updateChart empty startPos Open)
 
 -- This BFS returns all paths to all goals, by increasing order of
 -- distance.  So it can be used for all path-related parts of this

@@ -1,22 +1,21 @@
 -- Day 13: Care Package
 {-# LANGUAGE LambdaCase,DeriveAnyClass,FlexibleContexts #-}
 
-import IntCode (RAM,getIntCode,getIntCodeFromFile,poke,runIntStream,GenCodeF(..),runIntT)
+import IntCode (RAM,getIntCode,getIntCodeFromFile,poke,runIntStream,GenCodeF(..),runIntT,decode)
 
 import Control.Concurrent
-import Control.Exception         (Exception,bracket,handle,throwIO)
-import Control.Monad             (forM_,forever,void)
-import Control.Monad.Trans.Maybe (runMaybeT)
-import Control.Monad.Trans.Free  (FreeF(Pure,Free),runFreeT)
-import Control.Monad.State.Lazy  (lift,evalState,get,modify')
+import Control.Exception          (Exception,bracket,handle,throwIO)
+import Control.Monad              (forM_,forever,void)
+import Control.Monad.Trans.Free   (iterM)
+import Control.Monad.State.Strict (evalStateT,get,modify')
+import Control.Monad.Writer.Lazy  (execWriter,tell)
 import Data.Array.IO
-import Data.Either               (lefts,rights)
+import Data.Either                (lefts,rights)
 import Data.IORef
-import Data.Maybe                (fromMaybe)
-import Data.List.Split           (chunksOf)
-import System.Environment        (getArgs)
-import System.Exit               (exitFailure)
-import System.IO                 (hPutStrLn,stderr)
+import Data.List.Split            (chunksOf)
+import System.Environment         (getArgs)
+import System.Exit                (exitFailure)
+import System.IO                  (hPutStrLn,stderr)
 import Graphics.Vty hiding (Input,Output)
 
 type Pos = (Int,Int)
@@ -31,34 +30,30 @@ tiltToInt :: JoystickTilt -> Int
 tiltToInt = subtract 1 . fromEnum
 
 parseOutputs :: [Int] -> [ArcadeOutput]
-parseOutputs = map readTile . chunksOf 3
+parseOutputs = map (\[a,b,c] -> readTile a b c) . chunksOf 3
 
-readTile :: [Int] -> ArcadeOutput
-readTile [-1,0,s] = Right (ScoreOutput s)
-readTile [ x,y,t] = Left ((y,x),toEnum t)
-readTile wtf = error $ "Error: got this “tile”: " ++ show wtf
+readTile :: Int -> Int -> Int -> ArcadeOutput
+readTile (-1) 0 s = Right (ScoreOutput s)
+readTile   x  y t = Left ((y,x),toEnum t)
 
 data FollowerState = FS { ballPos :: Pos, paddlePos :: Pos }
 
 follower :: Strategy
-follower game = evalState (agent (runIntT game)) state0 where
-  state0 = FS (comeon "ball") (comeon "paddle")
-  comeon item = error $ "IntCode read joystick before even displaying a " ++ item
-                        ++ " — gimme a break!"
-  agent f = runFreeT f >>= \case
-    Pure () -> return []
-    Free (Input cont) -> do
+follower gm =
+    execWriter (evalStateT (iterM react (decode readTile (runIntT gm))) state0)
+  where
+    state0 = FS (comeon "ball") (comeon "paddle")
+    comeon item = error $ "IntCode read joystick before even displaying a "
+                          ++ item ++ " — gimme a break!"
+    react (Input cont) = do
       FS {ballPos = (_,bx), paddlePos = (_,px)} <- get
-      agent (cont (signum (bx - px)))
-    Free (Output x cont) -> bailWith "Unconforming IntCode" $ do
-      Free (Output y cont')       <- lift (runFreeT cont )
-      Free (Output tileId cont'') <- lift (runFreeT cont')
-      let ao = readTile [x,y,tileId]
-      case ao of Left (pos,Paddle) -> modify' $ \as -> as {paddlePos = pos}
-                 Left (pos,Ball)   -> modify' $ \as -> as {ballPos   = pos}
-                 _                 -> pure ()
-      fmap (ao :) $ lift $ agent cont''
-  bailWith msg = fmap (fromMaybe (error msg)) . runMaybeT
+      cont (signum (bx - px))
+    react (Output o cont) = do
+      tell [o]
+      case o of Left (pos,Paddle) -> modify' $ \as -> as {paddlePos = pos}
+                Left (pos,Ball)   -> modify' $ \as -> as {ballPos   = pos}
+                _                 -> pure ()
+      cont
 
 fromStream :: [JoystickTilt] -> Strategy
 fromStream inputs = parseOutputs . flip runIntStream (map tiltToInt inputs)
