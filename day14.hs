@@ -5,6 +5,7 @@ import qualified Data.Map.Strict as M
 import           Data.Map.Strict (Map,(!))
 import           Control.Monad.RWS.Strict
 import           Text.Regex.PCRE
+import           Numeric.Search
 import           Prelude hiding (product)
 
 type Chemical = String
@@ -56,12 +57,7 @@ main = do grimoire <- M.fromList . map readReaction . lines <$> getContents
 
           let oreCapacity = 1000000000000
               minFuel = oreCapacity `div` unitOreCost
-              (maxFuel:_) = filter ((> oreCapacity) . fuelOreCost) $
-                            map ((minFuel +) . (2^)) [0 :: Int ..]
-          print $ bsearch fuelOreCost oreCapacity minFuel maxFuel
-
-bsearch :: (Integral a,Ord c) => (a -> c) -> c -> a -> a -> a
-bsearch f goal = go where go ok excess | excess <= ok+1 = ok
-                                       | f mid <= goal  = go mid excess
-                                       | otherwise      = go ok  mid
-                            where mid = (ok + excess) `div` 2
+              Just fuelMargin = largest True $
+                                search nonNegativeExponential divForever $
+                                \m -> fuelOreCost (minFuel + m) <= oreCapacity
+          print (minFuel + fuelMargin)

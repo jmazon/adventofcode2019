@@ -235,4 +235,11 @@ packages:
       sha256: 94c160d3cba160be807fc2957f539453660cf64bd6cb29879aba82424d03527e
   original:
     hackage: utf8-string-1.0.1.1@sha256:68cc6cf665e7212334a51b63d6936daeaca023b2cfe8637d130acfe95f91700b,1151
+- completed:
+    hackage: binary-search-1.0.0.3@sha256:3db15438f8bfe00e4076a666090282722a3ff7edb6029303846668a4a05e68f0,2896
+    pantry-tree:
+      size: 576
+      sha256: a623e8d7cc540bdc91afa5052f15cc97dac2a0d7435e1ef143cf78f33aea1fe6
+  original:
+    hackage: binary-search-1.0.0.3@sha256:3db15438f8bfe00e4076a666090282722a3ff7edb6029303846668a4a05e68f0,2896
 snapshots: []
